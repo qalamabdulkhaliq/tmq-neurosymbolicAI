@@ -2,6 +2,9 @@ from dataclasses import dataclass
 from faculties.shahid_clock import Moment
 
 
+VALID_ORIGIN_TYPES = {"ayah", "inference", "human", "feed"}
+
+
 @dataclass
 class ProvenanceRecord:
     origin_type: str       # ayah | inference | human | feed
@@ -9,6 +12,17 @@ class ProvenanceRecord:
     session_id: str
     moment: Moment
     confidence: float      # 0.0 - 1.0
+
+    def __post_init__(self):
+        if not (0.0 <= self.confidence <= 1.0):
+            raise ValueError(
+                f"confidence must be in [0.0, 1.0], got {self.confidence}"
+            )
+        if self.origin_type not in VALID_ORIGIN_TYPES:
+            raise ValueError(
+                f"origin_type must be one of {sorted(VALID_ORIGIN_TYPES)}, "
+                f"got {self.origin_type!r}"
+            )
 
 
 def attach(edge_props: dict, record: ProvenanceRecord) -> dict:
