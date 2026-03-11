@@ -19,6 +19,7 @@ class TMQCorpus:
             self._edges: List[Dict] = list(raw_edges.values())
         else:
             self._edges = raw_edges
+        self._data = None
 
     @property
     def total_edges(self) -> int:
@@ -50,4 +51,4 @@ class TMQCorpus:
         return self._node_registry.get(node_id, {})
 
     def all_edges(self) -> List[Dict]:
-        return self._edges
+        return list(self._edges)
