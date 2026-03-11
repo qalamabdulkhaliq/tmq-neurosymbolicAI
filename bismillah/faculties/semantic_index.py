@@ -16,7 +16,10 @@ class SpectralIndex:
 
     def __init__(self, persist_dir: str = "chroma_spectral"):
         self._client = chromadb.PersistentClient(path=persist_dir)
-        self._col = self._client.get_or_create_collection("shahid_spectral")
+        self._col = self._client.get_or_create_collection(
+            "shahid_spectral",
+            metadata={"hnsw:space": "cosine"}
+        )
 
     def _edge_to_vector(self, edge: dict) -> List[float]:
         modal = edge.get("modal") or {}
