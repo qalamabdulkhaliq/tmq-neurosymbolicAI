@@ -1,0 +1,8 @@
+@prefix shah: <http://shahid/constitution#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+shah:Constitution a shah:LivingDocument ;
+    shah:version    "0.1"^^xsd:string ;
+    shah:created    "2026-03-15"^^xsd:string ;
+    shah:authored_by "Qalam 'Abd al-Khaliq"^^xsd:string ;
+    shah:note       "Amendments proposed by Shahid, approved by Qalam, contingent on N."^^xsd:string .

@@ -2,7 +2,7 @@ import os
 import pytest
 from faculties.reasoner import OWLReasoner
 
-TTL_PATH = "../quran_root_ontology_v3.ttl"
+TTL_PATH = "QUS-AI HF/quran_root_ontology_v3.ttl"
 
 
 @pytest.fixture(scope="module")

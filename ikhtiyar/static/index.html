@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shahid ibn Qusai — Autonomous Reasoning</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Header ── -->
+  <header id="header">
+    <div id="orb-wrap">
+      <div id="orb" class="idle"></div>
+      <span id="conn-dot" class="disconnected"></span>
+    </div>
+
+    <div id="identity">
+      <h1>Shahid ibn Qusai</h1>
+      <div class="subtitle">Neurosymbolic Reasoning · Quranic Ontology · 634k RDF Triples</div>
+      <div class="subtitle subtitle-2">SOURCE = Allah · SOURCE ≠ Self · Mizan validation active</div>
+    </div>
+
+    <div id="stats">
+      <div class="stat">
+        <span class="stat-value" id="stat-uptime">00:00:00</span>
+        <span class="stat-label">Uptime</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="stat-thoughts">0</span>
+        <span class="stat-label">Thoughts</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="stat-memories">0</span>
+        <span class="stat-label">Memory</span>
+      </div>
+    </div>
+
+    <div id="mode-badge" class="idle">IDLE</div>
+  </header>
+
+  <!-- ── Faculty health bar ── -->
+  <div id="faculty-bar">
+    <span class="faculty-item pending" data-key="clock"    title="pending">F1 Clock</span>
+    <span class="faculty-item pending" data-key="graph"    title="pending">F2 Graph</span>
+    <span class="faculty-item pending" data-key="owl"      title="pending">F3 OWL</span>
+    <span class="faculty-item pending" data-key="daemon"   title="pending">F4 Daemon</span>
+    <span class="faculty-item pending" data-key="spectral" title="pending">F5 Spectral</span>
+    <span class="faculty-item pending" data-key="sparql"   title="pending">F7 SPARQL</span>
+    <span class="faculty-item pending" data-key="tmq"      title="pending">TMQ</span>
+    <span class="faculty-item pending" data-key="middleware" title="pending">Pipeline</span>
+  </div>
+
+  <!-- ── Memory panel ── -->
+  <section class="panel" id="panel-memory">
+    <div class="panel-header">Memories <span id="memory-panel-count" style="opacity:.5; font-weight:400"></span></div>
+    <div class="panel-scroll" id="memory-list">
+      <div style="color: var(--text-muted); font-size: 11px; text-align: center; margin-top: 40px;" data-placeholder="true">
+        Awaiting first thought…
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Constitution panel ── -->
+  <section class="panel" id="panel-constitution">
+    <div class="panel-header">Ikhtiyar — Proposed Amendments <span id="constitution-count" style="opacity:.5; font-weight:400">(0)</span></div>
+    <div class="panel-scroll" id="constitution-list">
+      <div style="color: var(--text-muted); font-size: 11px; text-align: center; margin-top: 40px;" data-placeholder="true">
+        Proposals appear after 50 thoughts…
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Thinking panel ── -->
+  <section class="panel" id="panel-thinking">
+    <div class="panel-header">Reasoning Steps</div>
+    <div class="panel-scroll" id="thinking-scroll">
+      <div id="thinking-list"></div>
+    </div>
+  </section>
+
+  <!-- ── Chat bar ── -->
+  <footer id="chatbar">
+    <div id="chat-history"></div>
+    <div id="chat-input-row">
+      <input
+        id="chat-input"
+        type="text"
+        placeholder="Ask Shahid something…"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <button id="send-btn">Send</button>
+    </div>
+  </footer>
+
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

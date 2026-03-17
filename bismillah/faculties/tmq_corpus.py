@@ -1,14 +1,17 @@
 import json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 
 class TMQCorpus:
     """Read-only wrapper around TMQ_v10_hypermodal_enriched.json.
     Loaded once at startup, shared across all faculties.
     Never modified.
+
+    Optional enrichment_path: path to TMQ_enrichment_v1.json (or later versions).
+    Enrichment edges are appended after base edges; base is never touched.
     """
 
-    def __init__(self, path: str):
+    def __init__(self, path: str, enrichment_path: Optional[str] = None):
         with open(path, encoding="utf-8") as f:
             self._data = json.load(f)
         self._stats = self._data["stats"]
@@ -20,6 +23,24 @@ class TMQCorpus:
         else:
             self._edges = raw_edges
         self._data = None
+
+        self._enrichment_families: set = set()
+        if enrichment_path:
+            self._load_enrichment(enrichment_path)
+
+    def _load_enrichment(self, path: str) -> None:
+        with open(path, encoding="utf-8") as f:
+            enrich = json.load(f)
+        raw = enrich.get("hyperedges", {})
+        new_edges = list(raw.values()) if isinstance(raw, dict) else raw
+        for e in new_edges:
+            if isinstance(e, dict):
+                self._enrichment_families.add(e.get("family", ""))
+        self._edges.extend(new_edges)
+
+    @property
+    def enrichment_families(self) -> set:
+        return set(self._enrichment_families)
 
     @property
     def total_edges(self) -> int:
