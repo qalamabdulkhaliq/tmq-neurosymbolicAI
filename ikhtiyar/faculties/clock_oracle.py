@@ -123,6 +123,53 @@ class ClockOracle:
         diff = min(diff, 360.0 - diff)   # shortest arc
         return MAX_ANGULAR_BONUS * (1.0 - diff / 180.0)
 
+    def k_nearest(
+        self,
+        root: str,
+        k: int = 5,
+        candidates: list = None,
+    ) -> list[dict]:
+        """
+        Return k roots from candidates (or all indexed roots) nearest to root
+        on the clock face, sorted by shortest arc ascending.
+
+        Works even if root is not in _meta — computes its angle dynamically.
+
+        Args:
+            root:       Query root (Buckwalter). May not be in the indexed set.
+            k:          Number of results to return.
+            candidates: If provided, restrict the search pool to these roots.
+                        Each must be in _meta. Unknown candidates are skipped.
+
+        Returns:
+            list of dicts: [{"root", "angle_deg", "arc_deg", "D_class"}, ...]
+            sorted by arc_deg ascending (0° = same position, 180° = antipodal).
+        """
+        # Get or compute the target root's metadata
+        target_meta = self._meta.get(root)
+        if not target_meta:
+            target_meta = self._compute(root)
+        if not target_meta:
+            return []
+
+        pool = candidates if candidates is not None else list(self._meta.keys())
+
+        results = []
+        for r in pool:
+            m = self._meta.get(r)
+            if not m:
+                continue
+            diff = abs(target_meta.angle_deg - m.angle_deg)
+            arc = min(diff, 360.0 - diff)   # shortest arc on the clock face
+            results.append({
+                "root":      r,
+                "angle_deg": round(m.angle_deg, 1),
+                "arc_deg":   round(arc, 2),
+                "D_class":   m.D_class,
+            })
+
+        return sorted(results, key=lambda x: x["arc_deg"])[:k]
+
     def format_prompt_block(self, roots: list[str]) -> str:
         """
         Format clock annotations as a clearly labeled prompt block.

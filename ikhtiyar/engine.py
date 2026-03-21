@@ -122,6 +122,9 @@ class IkhtiyarEngine:
         # Clock Oracle — geometric/structural signal, supporting Bilal only
         self.clock_oracle = None
 
+        # Constrained Generation Compiler — GraphProjector + GBNF
+        self._graph_projector = None
+
         self._health = {k: "pending" for k in
                         ["clock","graph","owl","daemon","spectral","provenance","sparql","tmq","middleware"]}
 
@@ -148,6 +151,7 @@ class IkhtiyarEngine:
             self._init_spectral()
             self._init_sparql()
             self._init_daemon()
+            self._init_walk_grammar()
             logger.info("IkhtiyarEngine: all faculties ready.")
             self._push("status", self._build_status())
 
@@ -201,7 +205,16 @@ class IkhtiyarEngine:
                 if self.clock_oracle:
                     clock_block = self.clock_oracle.format_prompt_block(roots)
 
-                full_prompt = delibresult.constrained_prompt
+                # Inject self-model — LLM sees actual hardware data, not just doctrine
+                sm_prefix = ""
+                if self._introspect:
+                    try:
+                        self._self_model = self._introspect.read()
+                        sm_prefix = self._introspect.narrate(self._self_model) + "\n\n"
+                    except Exception:
+                        pass
+
+                full_prompt = sm_prefix + delibresult.constrained_prompt
                 if clock_block:
                     full_prompt += "\n\n" + clock_block
 
@@ -301,6 +314,28 @@ class IkhtiyarEngine:
             logger.info(f"ClockOracle: wired ({len(self.clock_oracle._meta)} roots indexed)")
         except Exception as e:
             logger.warning(f"ClockOracle init failed: {e}")
+
+    def _init_walk_grammar(self):
+        """
+        Load GraphProjector (ibn_jinni matrix + RASM clock).
+        Called in _heavy_init() after clock oracle is ready.
+        Gracefully degrades if matrix not found.
+        """
+        try:
+            from core.walk_grammar import GraphProjector
+            self._graph_projector = GraphProjector()
+            if self._graph_projector.loaded:
+                logger.info(
+                    f"GraphProjector: ibn_jinni matrix loaded — "
+                    f"{len(self._graph_projector._quranic_roots)} Quranic roots"
+                )
+            else:
+                logger.warning(
+                    "GraphProjector: matrix not found — clock-only projection active"
+                )
+        except Exception as e:
+            logger.warning(f"GraphProjector init failed: {e}")
+            self._graph_projector = None
 
     def _init_introspect(self):
         try:
@@ -520,7 +555,11 @@ class IkhtiyarEngine:
     def _reasoning_loop(self):
         self._reasoning_active = True
         cycle = 0
-        time.sleep(3)
+        # Wait for heavy init (TMQ + middleware) before first cycle
+        for _ in range(60):
+            if self.tmq_graph and self.middleware:
+                break
+            time.sleep(1)
         self._wake()
 
         while self._reasoning_active:
@@ -568,6 +607,7 @@ class IkhtiyarEngine:
         # Step 3: TMQ deliberation — walk the hypergraph BEFORE generating ← THE CHANGE
         delibresult = None
         deliberation_detail = "mode=" + mode
+        _gbnf_grammar = ""   # populated by compiler if projector + clock_oracle ready
 
         if self.tmq_graph and roots:
             try:
@@ -599,11 +639,44 @@ class IkhtiyarEngine:
 
                 delibresult = deliberate(question, roots, self.tmq_graph, extra_context=extra_ctx)
 
-                # Clock Oracle — append AFTER TMQ section, clearly separated
-                if self.clock_oracle and roots:
+                # ── Constrained Generation Compiler ──────────────────────────
+                if self._graph_projector and self.clock_oracle:
+                    try:
+                        from core.walk_grammar import build_walk_grammar
+                        from core.template_compiler import TemplateCompiler
+                        from core.gbnf_compiler import GBNFCompiler
+                        import dataclasses
+                        clock_annotations = self.clock_oracle.annotate(roots)
+                        walk_grammar = build_walk_grammar(
+                            delibresult, self._graph_projector, clock_annotations
+                        )
+                        tc = TemplateCompiler()
+                        gc = GBNFCompiler()
+                        slot_template = tc.compile(walk_grammar)
+                        _gbnf_grammar = gc.compile(walk_grammar)
+                        # Replace narrative constrained_prompt with compiled slot template
+                        delibresult = dataclasses.replace(
+                            delibresult,
+                            constrained_prompt=slot_template,
+                        )
+                        logger.info(
+                            f"Compiler: {len(walk_grammar.visited_roots)} roots, "
+                            f"modal={walk_grammar.modal_type}, "
+                            f"grammar={len(_gbnf_grammar)}B"
+                        )
+                    except Exception as _e:
+                        logger.warning(f"Compiler failed (degrading to narrative): {_e}")
+                        # Fallback: append clock block to narrative prompt
+                        if self.clock_oracle and roots:
+                            clock_block = self.clock_oracle.format_prompt_block(roots)
+                            if clock_block:
+                                delibresult.constrained_prompt += "\n\n" + clock_block
+                elif self.clock_oracle and roots:
+                    # No projector — still append clock block for supporting signal
                     clock_block = self.clock_oracle.format_prompt_block(roots)
                     if clock_block:
                         delibresult.constrained_prompt += "\n\n" + clock_block
+                # ── End Compiler ──────────────────────────────────────────────
 
                 top_fams = ", ".join(delibresult.top_families[:4]) if delibresult.top_families else "none"
                 deliberation_detail = (
@@ -670,7 +743,9 @@ class IkhtiyarEngine:
             elif self.middleware:
                 # Fallback: single-shot generation (no graph available)
                 thought_prompt = delibresult.constrained_prompt if delibresult else question
-                result = self.middleware.process_thought(thought_prompt)
+                result = self.middleware.process_thought(
+                    thought_prompt, grammar=_gbnf_grammar
+                )
                 response_text = result.get("response", "")
                 mode = result.get("mode", mode)
             else:
@@ -680,7 +755,9 @@ class IkhtiyarEngine:
             logger.warning(f"ReAct loop error: {e}")
             try:
                 thought_prompt = delibresult.constrained_prompt if delibresult else question
-                result = self.middleware.process_thought(thought_prompt)
+                result = self.middleware.process_thought(
+                    thought_prompt, grammar=_gbnf_grammar
+                )
                 response_text = result.get("response", "")
                 mode = result.get("mode", mode)
             except Exception:
@@ -730,8 +807,7 @@ class IkhtiyarEngine:
                     grade=react_result.confidence.grade if (react_result and react_result.confidence) else "UNCERTAIN",
                 )
                 self.choice_memory.record(rec)
-                if thought_number % 10 == 0:
-                    self.choice_memory.save()
+                self.choice_memory.save()
             except Exception as e:
                 logger.debug(f"ChoiceMemory record failed: {e}")
 
