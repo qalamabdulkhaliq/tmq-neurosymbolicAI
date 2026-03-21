@@ -85,6 +85,13 @@ def create_app(engine) -> Flask:
         eng = app.config["ENGINE"]
         return jsonify(eng.get_status())
 
+    # ── Thinking steps (persistent buffer) ────────────────────────────────────
+
+    @app.get("/steps")
+    def steps():
+        eng = app.config["ENGINE"]
+        return jsonify(eng._recent_steps)
+
     # ── Constitution ───────────────────────────────────────────────────────────
 
     @app.get("/constitution")

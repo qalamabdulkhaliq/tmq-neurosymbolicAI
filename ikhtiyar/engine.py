@@ -46,6 +46,15 @@ NEO4J_AUTH = (
 
 SESSION_ID = str(uuid.uuid4())[:8]
 
+# Buckwalter translation — QUS-AI HF hyphenated format → TMQ Buckwalter
+_TO_BUCKWALTER = {
+    "w-j-b": "wjb",  "m-k-n": "mkn",  "kh-l-q": "xlq",
+    "r-b-b": "rbb",  "3-b-d": "Ebd",  "3-l-m": "Elm",
+    "j-n-n": "jnn",  "l-gh-w": "lgw", "s-w-r": "swr",
+    "m-w-l": "mwl",  "f-s-d": "fsd",  "h-q-q": "Hqq",
+    "b-t-l": "bTl",
+}
+
 _SEED_QUESTIONS = [
     "What is the relationship between khalq (creation) and amr (command) in the TMQ topology?",
     "How does the root H-Q-Q (truth) constrain what I am permitted to assert?",
@@ -91,6 +100,7 @@ class IkhtiyarEngine:
         self._reasoning_active     = False
         self._orb_state            = "idle"
         self._start_time           = None
+        self._recent_steps: list  = []   # rolling buffer — Shahid can read his own reasoning
 
         # Faculty handles
         self.clock      = None
@@ -109,8 +119,11 @@ class IkhtiyarEngine:
         self._introspect  = None
         self._self_model  = None
 
+        # Clock Oracle — geometric/structural signal, supporting Bilal only
+        self.clock_oracle = None
+
         self._health = {k: "pending" for k in
-                        ["clock","graph","owl","daemon","spectral","sparql","tmq","middleware"]}
+                        ["clock","graph","owl","daemon","spectral","provenance","sparql","tmq","middleware"]}
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -121,11 +134,12 @@ class IkhtiyarEngine:
         self._init_clock()
         self._init_introspect()
         self._init_tmq()         # TMQCorpus (faculty wrapper)
-        self._init_tmq_graph()   # TMQGraph  (deliberation substrate) ← NEW
+        self._init_tmq_graph()   # TMQGraph  (deliberation substrate)
         self._init_owl()
         self._init_constitution()
         self._init_choice_memory()
         self._init_middleware()
+        self._init_clock_oracle()  # after middleware (needs root list from ontology)
 
         logger.info("IkhtiyarEngine: fast faculties done — Flask can start.")
 
@@ -147,14 +161,79 @@ class IkhtiyarEngine:
 
         threading.Thread(target=_status_loop, daemon=True).start()
 
+    def _chat_deliberate(self, msg: str) -> str:
+        """
+        Full deliberative path for chat messages.
+
+        1. Resonance  → Buckwalter roots
+        2. deliberate() → TMQ hypergraph walk → constrained_prompt
+        3. ClockOracle  → angular annotations (separate block, supporting only)
+        4. process_thought() → raw LLM generation within constrained context
+        5. Maghrib seal
+
+        Falls back to process_query() if tmq_graph or roots unavailable.
+        """
+        if not self.middleware:
+            return "[Middleware not available]"
+
+        # Step 1: roots
+        roots = []
+        try:
+            _, _, root_objs = self.middleware.ontology.analyze_resonance(msg)
+            raw_roots = [o.get("root", "") for o in root_objs if o.get("root")]
+            roots = [_TO_BUCKWALTER.get(r, r) for r in raw_roots]
+        except Exception as e:
+            logger.debug(f"Chat resonance failed: {e}")
+
+        self._push("thinking_step", {
+            "step": 1, "label": "Chat roots",
+            "detail": ", ".join(roots) if roots else "(none mapped)",
+        })
+
+        # Step 2: TMQ deliberation
+        if self.tmq_graph and roots:
+            try:
+                from core.deliberate import deliberate
+                delibresult = deliberate(msg, roots, self.tmq_graph, depth=2)
+
+                # Step 3: Clock Oracle — separate block, appended after TMQ section
+                clock_block = ""
+                if self.clock_oracle:
+                    clock_block = self.clock_oracle.format_prompt_block(roots)
+
+                full_prompt = delibresult.constrained_prompt
+                if clock_block:
+                    full_prompt += "\n\n" + clock_block
+
+                self._push("thinking_step", {
+                    "step": 2, "label": "Deliberating (chat)",
+                    "detail": (
+                        f"mode={delibresult.mode} · "
+                        f"edges={delibresult.walk_stats.get('edge_count', 0)} · "
+                        f"families={', '.join(delibresult.top_families[:3])}"
+                        + (" · ⚠ aseity_risk" if delibresult.aseity_risk else "")
+                    ),
+                })
+
+                result = self.middleware.process_thought(full_prompt, max_tokens=512)
+                response = result.get("response", "")
+
+                # Maghrib seal — not added by process_thought
+                if hasattr(self.middleware, 'validator'):
+                    response = self.middleware.validator.maghrib_seal(response)
+                return response
+
+            except Exception as e:
+                logger.warning(f"Chat deliberation failed, falling back: {e}")
+
+        # Fallback: old path (no TMQ walk)
+        return self.middleware.process_query(msg)
+
     def chat(self, msg: str) -> str:
         self._inject_state_perception()
         self._push("orb", {"state": "chat"})
         try:
-            if self.middleware:
-                response = self.middleware.process_query(msg)
-            else:
-                response = "[Middleware not available — Ollama may not be running]"
+            response = self._chat_deliberate(msg)
         except Exception as e:
             logger.warning(f"chat() error: {e}")
             response = f"[Pipeline error: {e}]"
@@ -195,6 +274,33 @@ class IkhtiyarEngine:
                 self._subscribers.remove(q)
 
     # ── Faculty init ───────────────────────────────────────────────────────────
+
+    def _init_clock_oracle(self):
+        """
+        Build ClockOracle from all roots in the TMQ corpus.
+        Pure arithmetic — fast. Supporting signal only.
+        """
+        try:
+            from faculties.clock_oracle import ClockOracle
+            self.clock_oracle = ClockOracle()
+            # Source roots from TMQ (most complete list)
+            roots = []
+            if self.tmq_graph:
+                roots = list(self.tmq_graph._roots) if hasattr(self.tmq_graph, '_roots') else []
+            if not roots and self.middleware and hasattr(self.middleware, 'ontology'):
+                # Fallback: Bilal's root corpus keys
+                bilal = getattr(self.middleware.ontology, 'bilal', None)
+                if bilal:
+                    roots = list(bilal.root_keys)
+            self.clock_oracle.build(roots)
+            # Wire into Bilal so angular bonus applies at resonance time
+            if self.middleware and hasattr(self.middleware, 'ontology'):
+                bilal = getattr(self.middleware.ontology, 'bilal', None)
+                if bilal:
+                    bilal.clock_oracle = self.clock_oracle
+            logger.info(f"ClockOracle: wired ({len(self.clock_oracle._meta)} roots indexed)")
+        except Exception as e:
+            logger.warning(f"ClockOracle init failed: {e}")
 
     def _init_introspect(self):
         try:
@@ -448,7 +554,8 @@ class IkhtiyarEngine:
         try:
             if self.middleware and hasattr(self.middleware, "ontology"):
                 _mode, _reason, root_objs = self.middleware.ontology.analyze_resonance(question)
-                roots = [o.get("root", "") for o in root_objs if o.get("root")]
+                raw_roots = [o.get("root", "") for o in root_objs if o.get("root")]
+                roots = [_TO_BUCKWALTER.get(r, r) for r in raw_roots]
                 mode  = _mode
         except Exception as e:
             logger.debug(f"Resonance failed: {e}")
@@ -491,6 +598,12 @@ class IkhtiyarEngine:
                         pass
 
                 delibresult = deliberate(question, roots, self.tmq_graph, extra_context=extra_ctx)
+
+                # Clock Oracle — append AFTER TMQ section, clearly separated
+                if self.clock_oracle and roots:
+                    clock_block = self.clock_oracle.format_prompt_block(roots)
+                    if clock_block:
+                        delibresult.constrained_prompt += "\n\n" + clock_block
 
                 top_fams = ", ".join(delibresult.top_families[:4]) if delibresult.top_families else "none"
                 deliberation_detail = (
@@ -872,6 +985,10 @@ class IkhtiyarEngine:
     def _push(self, event_type: str, payload: dict):
         if event_type == "orb":
             self._orb_state = payload.get("state", self._orb_state)
+        if event_type == "thinking_step":
+            self._recent_steps.append({"type": event_type, **payload})
+            if len(self._recent_steps) > 200:
+                self._recent_steps = self._recent_steps[-200:]
         event = {"type": event_type, **payload}
         with self._sub_lock:
             for sub_q in self._subscribers:

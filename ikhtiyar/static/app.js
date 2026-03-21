@@ -164,7 +164,7 @@ function prependMemoryCard(entry) {
 }
 
 // ── Header stats + faculty health ──────────────────────────────────────────
-const FACULTY_KEYS = ['clock','graph','owl','daemon','spectral','sparql','tmq','middleware'];
+const FACULTY_KEYS = ['clock','graph','owl','daemon','spectral','provenance','sparql','tmq','middleware'];
 
 function updateHeader(event) {
   if (event.uptime) {
@@ -271,6 +271,16 @@ setInterval(() => {
 }, 1000);
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────
+// Load recent thinking steps on page load
+fetch('/steps')
+  .then(r => r.json())
+  .then(steps => {
+    if (Array.isArray(steps) && steps.length > 0) {
+      steps.forEach(s => appendThinkingStep(s));
+    }
+  })
+  .catch(() => {});
+
 // Load existing memories on page load
 fetch('/memories')
   .then(r => r.json())
