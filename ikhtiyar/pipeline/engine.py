@@ -14,38 +14,13 @@ from qusai_core.utils.constants import (
 )
 from qusai_core.utils.self_description import SHAHID_ARCHITECTURE
 from qusai_core.ontology.resonance import ResonanceEngine
-from qusai_core.ontology.bilal import Bilal
+from .bilal import Bilal  # ikhtiyar/pipeline/bilal.py — Arabic corpus, multilingual model
 
 logger = logging.getLogger(__name__)
 
 
 def _resolve_ontology_path(file_path: Path) -> str:
-    """
-    Resolve Git LFS/Xet pointer to actual file.
-    On HuggingFace Spaces, large files are stored via LFS/Xet.
-    The local file may just be a pointer - detect and download the real file.
-    """
-    try:
-        with open(file_path, 'rb') as f:
-            header = f.read(100)
-
-        if b'version https://git-lfs.github.com' in header:
-            logger.info("Detected Git LFS pointer for ontology, downloading actual file...")
-            space_id = os.environ.get("SPACE_ID")
-            if space_id:
-                from huggingface_hub import hf_hub_download
-                actual_path = hf_hub_download(
-                    repo_id=space_id,
-                    filename=str(file_path),
-                    repo_type="space"
-                )
-                logger.info(f"Downloaded ontology to: {actual_path}")
-                return actual_path
-            else:
-                logger.warning("LFS pointer detected but SPACE_ID not set, trying direct parse anyway")
-    except Exception as e:
-        logger.warning(f"LFS check failed: {e}")
-
+    """Return the ontology path as-is. LFS resolution only needed on HF Spaces."""
     return str(file_path)
 
 
@@ -110,10 +85,17 @@ class OntologyEngine:
                 logger.info(f"Loaded {len(self.graph):,} triples.")
                 self._is_loaded = True
 
-                # Initialize Bilal with the loaded graph
+                # Initialize Bilal with the loaded graph — Arabic corpus primary
                 try:
-                    self.bilal.load(self.concept_map, graph=self.graph)
-                    logger.info("Bilal initialized with ontology graph.")
+                    import os as _os
+                    _here = _os.path.dirname(_os.path.abspath(__file__))
+                    _constitution = _os.path.join(_here, "..", "active_command_set.json")
+                    self.bilal.load(
+                        self.concept_map,
+                        graph=self.graph,
+                        constitution_path=_constitution,
+                    )
+                    logger.info("Bilal initialized — Arabic corpus from constitution.")
                 except Exception as bilal_err:
                     logger.warning(f"Bilal init failed (resonance still available): {bilal_err}")
 

@@ -1,0 +1,223 @@
+{
+  "total_segments": 128219,
+  "idf_floor": {
+    "tag": "REM",
+    "idf": 3.7804
+  },
+  "idf_ceiling": {
+    "tag": "AVR",
+    "idf": 8.265
+  },
+  "provenance": "IDF = log(128219 / count) from quranic-corpus-morphology-0.4.txt. Gate set: 24 confirmed tags. BORDER tags promoted by corpus co-occurrence: REM(74.7%), SUB(83.5%), CIRC(82.4%), SUP(97.8%) all above 75% threshold. CONJ removed (noise). PRO/PREV/IMPV/INTG/VOC added (missing from prior set). Magnitude: amplify/discharge=[1.0,1.5], attenuate/gate=[0.5,1.0], invert=sign-flip with magnitude [1.0,1.5]. elevate/route=1.0 (structural). No values chosen by hand. All from corpus.",
+  "gate_weights": {
+    "AMD": {
+      "count": 65,
+      "idf": 7.5871,
+      "direction": "attenuate",
+      "magnitude": 0.5756,
+      "description": "amendment bal/lakin"
+    },
+    "ANS": {
+      "count": 40,
+      "idf": 8.0726,
+      "direction": "discharge",
+      "magnitude": 1.4786,
+      "description": "answer/apodosis of conditional"
+    },
+    "AVR": {
+      "count": 33,
+      "idf": 8.265,
+      "direction": "invert",
+      "magnitude": 1.5,
+      "description": "aversion emphatic"
+    },
+    "CAUS": {
+      "count": 88,
+      "idf": 7.2842,
+      "direction": "amplify",
+      "magnitude": 1.3906,
+      "description": "causal li-anna/idh/fa"
+    },
+    "CERT": {
+      "count": 414,
+      "idf": 5.7356,
+      "direction": "amplify",
+      "magnitude": 1.218,
+      "description": "certainty inna/anna/lakinna"
+    },
+    "CIRC": {
+      "count": 293,
+      "idf": 6.0813,
+      "direction": "attenuate",
+      "magnitude": 0.7435,
+      "description": "circumstantial — 82.4% gate co-occurrence, NEG:142"
+    },
+    "COND": {
+      "count": 1049,
+      "idf": 4.8059,
+      "direction": "gate",
+      "magnitude": 0.8857,
+      "description": "conditional in/idha/law"
+    },
+    "EMPH": {
+      "count": 1244,
+      "idf": 4.6354,
+      "direction": "amplify",
+      "magnitude": 1.0953,
+      "description": "emphasis laam/qad"
+    },
+    "EXH": {
+      "count": 40,
+      "idf": 8.0726,
+      "direction": "amplify",
+      "magnitude": 1.4786,
+      "description": "exhortation ala/ama"
+    },
+    "EXL": {
+      "count": 66,
+      "idf": 7.5718,
+      "direction": "attenuate",
+      "magnitude": 0.5773,
+      "description": "exclusive innama only"
+    },
+    "EXP": {
+      "count": 104,
+      "idf": 7.1171,
+      "direction": "attenuate",
+      "magnitude": 0.628,
+      "description": "exception illa/ghayr"
+    },
+    "IMPV": {
+      "count": 78,
+      "idf": 7.4048,
+      "direction": "amplify",
+      "magnitude": 1.4041,
+      "description": "imperative mood — AMR at segment level"
+    },
+    "INTG": {
+      "count": 946,
+      "idf": 4.9093,
+      "direction": "elevate",
+      "magnitude": 1.0,
+      "description": "interrogative hal/a — elevates tier to QIYAS"
+    },
+    "NEG": {
+      "count": 2688,
+      "idf": 3.8649,
+      "direction": "invert",
+      "magnitude": 1.0094,
+      "description": "negation laa/lam/lan/maa/layta/laysa"
+    },
+    "PREV": {
+      "count": 162,
+      "idf": 6.6739,
+      "direction": "invert",
+      "magnitude": 1.3226,
+      "description": "preventive lamma/lan"
+    },
+    "PRO": {
+      "count": 332,
+      "idf": 5.9564,
+      "direction": "invert",
+      "magnitude": 1.2426,
+      "description": "prohibition laa naahiya"
+    },
+    "PRP": {
+      "count": 319,
+      "idf": 5.9963,
+      "direction": "amplify",
+      "magnitude": 1.2471,
+      "description": "purpose li/kay/hatta"
+    },
+    "REM": {
+      "count": 2925,
+      "idf": 3.7804,
+      "direction": "attenuate",
+      "magnitude": 1.0,
+      "description": "sequential fa — 74.7% gate co-occurrence, COND:539"
+    },
+    "RES": {
+      "count": 558,
+      "idf": 5.4371,
+      "direction": "attenuate",
+      "magnitude": 0.8153,
+      "description": "restriction illa except"
+    },
+    "RET": {
+      "count": 122,
+      "idf": 6.9575,
+      "direction": "invert",
+      "magnitude": 1.3542,
+      "description": "retraction bal nay-rather"
+    },
+    "RSLT": {
+      "count": 350,
+      "idf": 5.9036,
+      "direction": "discharge",
+      "magnitude": 1.2367,
+      "description": "result clause jawab"
+    },
+    "SUB": {
+      "count": 684,
+      "idf": 5.2335,
+      "direction": "attenuate",
+      "magnitude": 0.838,
+      "description": "subordinator — 83.5% gate co-occurrence, COND:147 NEG:307"
+    },
+    "SUP": {
+      "count": 235,
+      "idf": 6.3019,
+      "direction": "attenuate",
+      "magnitude": 0.7189,
+      "description": "supplemental — 97.8% gate co-occurrence, INTG:180"
+    },
+    "VOC": {
+      "count": 376,
+      "idf": 5.8319,
+      "direction": "route",
+      "magnitude": 1.0,
+      "description": "vocative ya — routes addressee register"
+    }
+  },
+  "border_deferred": {
+    "FUT": {
+      "count": 161,
+      "idf": 6.6801,
+      "direction": "amplify",
+      "magnitude": null,
+      "description": "future sa/sawfa — 68.4% gate co-occurrence",
+      "note": "gate co-occurrence below 75% threshold — deferred pending further corpus analysis"
+    },
+    "INC": {
+      "count": 90,
+      "idf": 7.2617,
+      "direction": "amplify",
+      "magnitude": null,
+      "description": "inceptive — 68.7% gate co-occurrence",
+      "note": "gate co-occurrence below 75% threshold — deferred pending further corpus analysis"
+    },
+    "INT": {
+      "count": 47,
+      "idf": 7.9113,
+      "direction": "amplify",
+      "magnitude": null,
+      "description": "intensifier — 65.2% gate co-occurrence",
+      "note": "gate co-occurrence below 75% threshold — deferred pending further corpus analysis"
+    },
+    "SUR": {
+      "count": 35,
+      "idf": 8.2061,
+      "direction": "amplify",
+      "magnitude": null,
+      "description": "surprise/wonder — 62.9% gate co-occurrence",
+      "note": "gate co-occurrence below 75% threshold — deferred pending further corpus analysis"
+    }
+  },
+  "excluded": {
+    "CONJ": "noise — grammatical glue, 9450 occurrences, no logical content",
+    "IMPN": "too rare — 2 occurrences, subsumed by PRO+NEG",
+    "INL": "muqattaat — handled at tier level as WAQF",
+    "EQ": "too rare — 6 occurrences",
+    "COM": "too rare — 3 occurrences"
+  }
+}

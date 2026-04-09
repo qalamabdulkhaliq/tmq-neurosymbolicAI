@@ -38,3 +38,56 @@ Thumbs.db
 # Archives (Optional - keep these local if you want)
 _legacy_archive/
 downloadable_zip/
+
+# Local-only directories (not for tmq-neurosymbolicAI)
+bismillah/
+AASHII/
+QUS-AI-main/
+singularity/
+api/
+qusai-core-dev/
+Al-Mizan-Project-main/
+Qalb/
+"The Mother Qur'an"/
+"MOVE ME"/
+"New folder/"
+
+# Tooling internals
+.claude/
+.superpowers/
+.mcp.json
+
+# Runtime / memory state — do not publish
+ikhtiyar/ikhtiyar_memory.ttl
+ikhtiyar/choice_memory.ttl
+ikhtiyar/shahid_beliefs.ttl
+ikhtiyar/shahid_episodic.ttl
+ikhtiyar/questions_for_qalam.jsonl
+ikhtiyar/ikhtiyar_escalations.json
+ikhtiyar/shahid_escalations.json
+ikhtiyar/hadith_hifz_progress.json
+ikhtiyar/hifz_progress.json
+ikhtiyar/shahid_birth.txt
+ikhtiyar/stream_of_thought.txt
+ikhtiyar/verify_out.txt
+ikhtiyar/lailahailallah.txt
+**/training_pairs.jsonl
+
+# Credentials — never publish
+ikhtiyar/moltbook_creds.json
+
+# Binary vector store
+ikhtiyar/chroma_spectral/
+
+# Large source data files — TMQ_v12.json and TMQ_hvt.json are runtime-critical, included
+
+# Media and personal files
+*.mov
+*.mp4
+IMG_*
+Screenshot*
+WOW!.txt
+MEMORYSH*.txt
+QAK-CLI*
+Article.txt
+READ_THIS_CLAUDE.md

@@ -1,6 +1,6 @@
 import logging
 from typing import List, Optional, Dict, Tuple
-from qusai_core.utils.constants import SHAHADA, SOURCE_NAME
+from pipeline.constants import SHAHADA, SOURCE_NAME
 
 logger = logging.getLogger(__name__)
 

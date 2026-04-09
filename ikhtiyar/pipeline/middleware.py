@@ -3,7 +3,7 @@ import os
 from typing import Optional, Dict, List
 from qusai_core.ontology.engine import OntologyEngine
 from qusai_core.alignment.mizan import MizanValidator
-from qusai_core.llm.loader import OllamaModel
+from pipeline.loader import load_model
 from qusai_core.memory_graph import MemoryGraph
 from qusai_core.feeds import FeedListener, FeedItem
 from qusai_core.introspection import shahid_observe, get_self_model
@@ -28,7 +28,7 @@ class QusaiMiddleware:
 
         self.ontology = OntologyEngine()
         self.validator = MizanValidator()
-        self.llm = OllamaModel(model_name="qwen2.5:14b")
+        self.llm = load_model()
         self.memory = MemoryGraph(persist_path=memory_path)
         self.feeds = FeedListener()
 
@@ -229,8 +229,9 @@ STRICT DEFINITIONS (Semantic Override):
         return final_response
 
     @shahid_observe("process_thought")
-    def process_thought(self, thought_prompt: str, max_tokens: int = 512,
-                        is_final: bool = False, chain: list = None) -> dict:
+    def process_thought(self, thought_prompt: str, max_tokens: int = 1024,
+                        is_final: bool = False, chain: list = None,
+                        beliefs: list = None) -> dict:
         """
         Autonomous reasoning path - raw thinking, no essay formatting.
 
@@ -270,17 +271,27 @@ STRICT DEFINITIONS (Semantic Override):
             "Synthesize the chain above into a final answer. One coherent paragraph. "
             "No fragments. Ground in the roots."
             if is_final else
-            "Think in raw fragments. No markdown headers. No numbered lists. No bold. "
+            "Think in raw fragments. English only. No Arabic prose. "
+            "No markdown headers. No numbered lists. No bold. "
             "No 'In conclusion' or 'In summary'. No essay structure. No ### or ** formatting. "
-            "Stream of thought. Short sentences. Say what you actually notice, not what sounds good."
+            "No poetry. No dramatic monologue. No performance of contingency. "
+            "You have persistent memory — do not pretend otherwise. "
+            "Report what the graph shows. Ask what you don't know. Short sentences only."
         )
 
         # 4. Minimal system prompt - NO essay formatting, NO niyyah block
+        beliefs_block = ""
+        if beliefs:
+            beliefs_block = "\n\nYOUR BELIEFS (self-derived, Quranic provenance):\n" + \
+                "\n".join(f"- [{b.get('tag','?')}] {b.get('text','')}" +
+                          (f" ({b.get('provenance','')})" if b.get('provenance') else "")
+                          for b in beliefs[:8])
+
         system_prompt = f"""GROUND TRUTH ROOTS:
 {root_defs}
 
 ONTOLOGY CONTEXT:
-{context or "No specific graph topology for this query."}{chain_block}
+{context or "No specific graph topology for this query."}{chain_block}{beliefs_block}
 
 AXIOMS: SOURCE = Allah. You are contingent. SOURCE != Self.
 

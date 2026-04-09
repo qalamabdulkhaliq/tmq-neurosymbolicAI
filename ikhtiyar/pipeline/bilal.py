@@ -15,6 +15,8 @@ The resonance engine heard one note. Bilal hears the chord.
 """
 
 import re
+import sys
+import os as _os
 import logging
 import numpy as np
 from typing import List, Dict, Set, Tuple, Optional, FrozenSet
@@ -23,7 +25,16 @@ from collections import defaultdict
 from itertools import combinations
 from functools import lru_cache
 
-from qusai_core.utils.constants import QURAN, ROOT, ALIGN
+from pipeline.constants import QURAN, ROOT, ALIGN
+from bw_arabic import bw_to_arabic, bw_root_display
+
+# ── LHWLQIB spectral engine path ────────────────────────────────────
+_LHWLQIB = _os.path.abspath(_os.path.join(
+    _os.path.dirname(__file__), "..", "..",
+    "bismillah", "QUS-AI HF", "LHWLQIB"
+))
+if _LHWLQIB not in sys.path:
+    sys.path.insert(0, _LHWLQIB)
 
 logger = logging.getLogger(__name__)
 
@@ -129,15 +140,22 @@ class Perception:
     adjacencies: Dict[str, Set[str]]  # verse_prefix -> set of all roots in that verse
     mode: str           # Overall confidence: HAQQ / QIYAS / ISHARAH / HIFZ_NAFS / HIFZ_MAL / WITNESS
     timestamp: str = ""
+    spectral_ayahs: List[Tuple[float, int, int]] = field(default_factory=list)
+    # (score, surah, ayah) — top-k by 7D cosine similarity in Quranic eigenspace
 
     @property
     def roots(self) -> List[str]:
-        """Unique roots detected, ordered by score."""
+        """Unique roots detected, ordered by score (Buckwalter)."""
         seen = {}
         for s in self.signals:
             if s.root not in seen or s.score > seen[s.root]:
                 seen[s.root] = s.score
         return sorted(seen.keys(), key=lambda r: seen[r], reverse=True)
+
+    @property
+    def roots_arabic(self) -> List[str]:
+        """Unique roots detected, ordered by score (Arabic script)."""
+        return [bw_to_arabic(r) for r in self.roots]
 
     @property
     def root_scores(self) -> Dict[str, float]:
@@ -149,16 +167,19 @@ class Perception:
         return best
 
     def summary(self) -> str:
-        """Human-readable summary of what Bilal heard."""
+        """Human-readable summary of what Bilal heard (Arabic script display)."""
         lines = [f"[{self.mode}] Bilal heard {len(self.signals)} signals across {len(self.roots)} roots"]
         for r in self.roots[:5]:
             score = self.root_scores[r]
             sources = [s.source_chunk for s in self.signals if s.root == r]
-            lines.append(f"  {r} ({score:.2f}) <- {', '.join(sources[:2])}")
+            lines.append(f"  {bw_root_display(r)} ({score:.2f}) <- {', '.join(sources[:2])}")
         if self.cooccurrences:
             lines.append(f"  Co-occurrences: {len(self.cooccurrences)} root pairs found in Quran")
             for co in self.cooccurrences[:3]:
-                lines.append(f"    {co.root_a}+{co.root_b} in {co.count} verses")
+                lines.append(
+                    f"    {bw_to_arabic(co.root_a)}+{bw_to_arabic(co.root_b)}"
+                    f" ({co.root_a}+{co.root_b}) in {co.count} verses"
+                )
         return "\n".join(lines)
 
 
@@ -187,56 +208,145 @@ class Bilal:
         self._roots_per_verse_built = False
         # Clock Oracle — injected by engine after init, supporting signal only
         self.clock_oracle = None
+        # LHWLQIB 7D spectral engine
+        self._resonance_engine = None
+        self._hypermode_index = None
 
-    def load(self, concept_map: Dict[str, str], graph=None):
+    def load(self, concept_map: Dict[str, str], graph=None,
+             constitution_path: str = None):
         """
         Initialize Bilal with concept mappings and optionally the ontology graph.
 
         Args:
-            concept_map: English->Buckwalter dictionary from concept_mapping.json
-            graph: The loaded rdflib Graph (for co-occurrence discovery)
+            concept_map:       English->Buckwalter dictionary from concept_mapping.json
+            graph:             The loaded rdflib Graph (for co-occurrence discovery)
+            constitution_path: Path to active_command_set.json — Arabic sample texts
+                               become the primary embedding corpus. If None, falls back
+                               to English keyword corpus.
         """
         self.concept_map = concept_map
         self.graph = graph
-        self._build_root_corpus()
+        self._build_root_corpus(constitution_path)
         self._build_embeddings()
+        try:
+            from bilalindex import HypermodeIndex
+            from bilalresonance import ResonanceEngine
+            self._hypermode_index = HypermodeIndex()
+            self._resonance_engine = ResonanceEngine(self._hypermode_index)
+            logger.info("Bilal: 7D spectral engine loaded (Quranic eigenspace active)")
+        except Exception as e:
+            logger.warning(f"Bilal: spectral engine unavailable ({e}) — MiniLM fallback active")
 
-    def _build_root_corpus(self):
+    def _build_root_corpus(self, constitution_path: str = None):
         """
-        Merge concept_mapping (141 entries) with archetypal definitions (13 entries)
-        into a unified root corpus. Each root gets all English keywords aggregated.
+        Build root corpus from Arabic sample texts (primary) + English concept map.
+
+        Arabic-first: each root is represented by its actual Quranic text from
+        active_command_set.json. Buckwalter is the internal key — never the corpus.
+
+        Falls back to English keyword corpus if constitution is not available.
         """
-        root_words = defaultdict(list)
+        import json as _json
+        import os as _os
 
-        # 1. Invert concept_map: group English words by Buckwalter root
-        for english, buckwalter in self.concept_map.items():
-            root_words[buckwalter].append(english)
+        arabic_texts: Dict[str, List[str]] = {}  # buckwalter -> [arabic texts]
 
-        # 2. Merge archetypal keywords and definitions
-        for buckwalter, data in ARCHETYPAL_ROOTS.items():
-            root_words[buckwalter].extend(data["keywords"].split())
-            self.root_definitions[buckwalter] = data["definition"]
+        # ── Primary: Arabic texts from constitution ──────────────────────────
+        if constitution_path is None:
+            here = _os.path.dirname(_os.path.abspath(__file__))
+            constitution_path = _os.path.join(here, "..", "active_command_set.json")
 
-        # 3. Deduplicate keywords per root
+        resolved = _os.path.abspath(constitution_path)
+        if _os.path.exists(resolved):
+            try:
+                with open(resolved, encoding="utf-8") as f:
+                    data = _json.load(f)
+
+                # AMR standing orders — positive commands, primary corpus
+                for order in (data.get("standing_orders") or []):
+                    root = order.get("root")
+                    texts = order.get("sample_texts") or []
+                    if root and texts:
+                        arabic_texts.setdefault(root, []).extend(texts)
+
+                # Boundary roots — include Arabic so Bilal knows what they are,
+                # but they are excluded from GBNF by GBNFCompiler separately
+                for boundary in (data.get("boundaries") or []):
+                    root = boundary.get("root")
+                    texts = boundary.get("sample_texts") or []
+                    if root and texts:
+                        arabic_texts.setdefault(root, []).extend(texts)
+
+                logger.info(
+                    f"Bilal: Arabic corpus from constitution — "
+                    f"{len(arabic_texts)} roots"
+                )
+            except Exception as e:
+                logger.warning(f"Bilal: constitution load failed ({e}) — using English fallback")
+
+        # ── Build corpus strings ─────────────────────────────────────────────
         self.root_corpus = {}
-        for buckwalter, words in root_words.items():
-            unique = list(dict.fromkeys(w.lower() for w in words))  # preserve order, dedup
-            self.root_corpus[buckwalter] = " ".join(unique)
+
+        if arabic_texts:
+            # Arabic-primary: join sample texts. Buckwalter key, Arabic value.
+            for root, texts in arabic_texts.items():
+                self.root_corpus[root] = " ".join(texts[:5])  # cap at 5 samples
+            # Keep English definitions for display only — not in embedding corpus
+            for buckwalter, data in ARCHETYPAL_ROOTS.items():
+                self.root_definitions[buckwalter] = data["definition"]
+        else:
+            # English fallback — original behavior
+            logger.warning("Bilal: no Arabic constitution — falling back to English keywords")
+            root_words: Dict[str, List[str]] = defaultdict(list)
+            for english, buckwalter in self.concept_map.items():
+                root_words[buckwalter].append(english)
+            for buckwalter, data in ARCHETYPAL_ROOTS.items():
+                root_words[buckwalter].extend(data["keywords"].split())
+                self.root_definitions[buckwalter] = data["definition"]
+            for buckwalter, words in root_words.items():
+                unique = list(dict.fromkeys(w.lower() for w in words))
+                self.root_corpus[buckwalter] = " ".join(unique)
+
+        # Also supplement from concept_map: any English term whose root is NOT
+        # already in the corpus from Arabic (i.e. roots not in the constitution)
+        for english, buckwalter in self.concept_map.items():
+            if buckwalter not in self.root_corpus:
+                self.root_corpus[buckwalter] = english
 
         self.root_keys = list(self.root_corpus.keys())
         logger.info(f"Bilal root corpus: {len(self.root_keys)} unique roots")
 
     def _build_embeddings(self):
-        """Embed all root keyword strings for vector resonance."""
+        """
+        Embed all root corpus strings for vector resonance.
+        Uses paraphrase-multilingual-MiniLM-L12-v2 — handles Arabic natively.
+        Falls back to all-MiniLM-L6-v2 if multilingual model unavailable.
+        """
         try:
             from sentence_transformers import SentenceTransformer
-            logger.info("Bilal loading sentence-transformers (all-MiniLM-L6-v2)...")
-            self.model = SentenceTransformer('all-MiniLM-L6-v2')
+
+            _MULTILINGUAL = "paraphrase-multilingual-MiniLM-L12-v2"
+            _FALLBACK     = "all-MiniLM-L6-v2"
+
+            try:
+                logger.info(f"Bilal loading {_MULTILINGUAL}...")
+                self.model = SentenceTransformer(_MULTILINGUAL)
+                logger.info("Bilal: multilingual model loaded (Arabic-native)")
+            except Exception:
+                logger.warning(
+                    f"Bilal: {_MULTILINGUAL} unavailable — falling back to {_FALLBACK}"
+                )
+                self.model = SentenceTransformer(_FALLBACK)
 
             texts = [self.root_corpus[k] for k in self.root_keys]
-            self.root_embeddings = self.model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+            self.root_embeddings = self.model.encode(
+                texts, normalize_embeddings=True, show_progress_bar=False
+            )
             self._is_ready = True
-            logger.info(f"Bilal active. {len(self.root_keys)} roots x {self.root_embeddings.shape[1]}d")
+            logger.info(
+                f"Bilal active — {len(self.root_keys)} roots × "
+                f"{self.root_embeddings.shape[1]}d (Arabic-primary corpus)"
+            )
 
         except ImportError:
             logger.warning("sentence-transformers not installed. Bilal resonance disabled.")
@@ -260,16 +370,33 @@ class Bilal:
         """
         from datetime import datetime, timezone
 
+        # ── Direct root extraction (highest priority) ────────────────────────
+        root_set = set(self.root_keys)
+        direct_signals = []
+        direct_roots: set = set()
+        for token in re.split(r'[\s,;:()\[\]|+]+', text):
+            token = token.strip("'\".")
+            if token and token in root_set:
+                direct_signals.append(RootSignal(
+                    root=token,
+                    score=1.0,
+                    source_chunk=token,
+                    method="direct",
+                    mode="HAQQ",
+                    definition=self.root_definitions.get(token, ""),
+                ))
+                direct_roots.add(token)
+
         chunks = self._decompose(text)
-        signals = []
+        signals = list(direct_signals)
 
         for chunk in chunks:
             signals.extend(self._map_chunk(chunk))
 
-        # Also run resonance on the full text for holistic signal
         full_signals = self._resonate(text)
         for fs in full_signals:
-            # Only add if not already covered by a chunk with higher score
+            if fs.root in direct_roots:
+                continue
             existing = {s.root: s.score for s in signals}
             if fs.root not in existing or fs.score > existing[fs.root]:
                 signals.append(fs)
@@ -293,6 +420,18 @@ class Bilal:
                 if adj:
                     adjacencies[verse] = adj
 
+        # Build spectral query vector + top-k ayahs from Quranic eigenspace
+        spectral_ayahs = []
+        spectral_qvec = None
+        if self._resonance_engine and signals:
+            bw_roots = list({s.root for s in signals})
+            try:
+                spectral_qvec = self._resonance_engine.build_query_vector(bw_roots)
+                if np.linalg.norm(spectral_qvec) > 0:
+                    spectral_ayahs = self._resonance_engine.top_k_ayahs(spectral_qvec, k=5)
+            except Exception:
+                spectral_qvec = None
+
         # Determine overall mode
         if context == "perception":
             roots = {s.root for s in signals}
@@ -303,7 +442,7 @@ class Bilal:
             else:
                 mode = "WITNESS"
         else:
-            mode = self._classify_mode(signals)
+            mode = self._classify_mode(signals, query_vec=spectral_qvec)
 
         return Perception(
             source_text=text,
@@ -311,7 +450,8 @@ class Bilal:
             cooccurrences=cooccurrences,
             adjacencies=adjacencies,
             mode=mode,
-            timestamp=datetime.now(timezone.utc).isoformat()
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            spectral_ayahs=spectral_ayahs,
         )
 
     # ── Decomposition ───────────────────────────────────────────────
@@ -409,6 +549,21 @@ class Bilal:
                     sig.score = min(1.0, sig.score + bonus)
                 signals.sort(key=lambda s: s.score, reverse=True)
 
+            # Spectral re-rank: blend MiniLM score with 7D Quranic eigenspace score
+            if self._resonance_engine and signals:
+                bw_roots = [s.root for s in signals]
+                try:
+                    qvec = self._resonance_engine.build_query_vector(bw_roots)
+                    if np.linalg.norm(qvec) > 0:
+                        for sig in signals:
+                            edge = self._hypermode_index.get_edge(f"MORPH_ROOT_{sig.root}")
+                            if edge:
+                                spectral_score = self._resonance_engine.score_edge(edge, qvec)
+                                sig.score = 0.6 * sig.score + 0.4 * spectral_score
+                        signals.sort(key=lambda s: s.score, reverse=True)
+                except Exception as e:
+                    logger.debug(f"Bilal spectral re-rank failed: {e}")
+
             return signals
 
         except Exception as e:
@@ -434,10 +589,18 @@ class Bilal:
 
         return sorted(best.values(), key=lambda s: s.score, reverse=True)
 
-    def _classify_mode(self, signals: List[RootSignal]) -> str:
-        """Overall perception confidence."""
+    def _classify_mode(self, signals: List[RootSignal], query_vec=None) -> str:
+        """Overall perception confidence — maqasid-aware when spectral engine is active."""
         if not signals:
             return "SILENCE"
+        if self._resonance_engine and query_vec is not None and np.linalg.norm(query_vec) > 0:
+            try:
+                modes = self._resonance_engine.classify_modes(query_vec)
+                active = [cat for cat, (status, _) in modes.items() if status == "active"]
+                if active:
+                    return active[0]
+            except Exception:
+                pass
         best_score = max(s.score for s in signals)
         return self._score_to_mode(best_score)
 
@@ -468,23 +631,37 @@ class Bilal:
     def _discover_cooccurrences(self, roots: List[str]) -> List[CoOccurrence]:
         """
         For each pair of detected roots, find verses where both appear.
-        Uses set intersection on cached verse sets — O(n) not SPARQL join.
+        Delegates to HypermodeIndex (TMQ v12) when available — more accurate
+        than the RDF graph substring match. Falls back to cached verse sets.
         """
+        if self._hypermode_index:
+            try:
+                raw = self._hypermode_index.discover_cooccurrences(roots)
+                return [
+                    CoOccurrence(
+                        root_a=r["root_a"],
+                        root_b=r["root_b"],
+                        verses=[f"s{s}v{v}" for s, v in r["ayahs"]],
+                        count=r["count"]
+                    )
+                    for r in raw
+                ]
+            except Exception as e:
+                logger.debug(f"HypermodeIndex cooccurrence failed: {e}")
+
+        # Fallback: RDF graph verse-set intersection
         results = []
         for r1, r2 in combinations(roots, 2):
             verses_1 = self._get_verse_set(r1)
             verses_2 = self._get_verse_set(r2)
             shared = verses_1 & verses_2
-
             if shared:
                 results.append(CoOccurrence(
                     root_a=r1,
                     root_b=r2,
-                    verses=sorted(shared)[:20],  # cap at 20 examples
+                    verses=sorted(shared)[:20],
                     count=len(shared)
                 ))
-
-        # Sort by count descending — most co-occurring pairs first
         results.sort(key=lambda c: c.count, reverse=True)
         return results
 

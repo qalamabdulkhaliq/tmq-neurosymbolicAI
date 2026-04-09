@@ -1,0 +1,24 @@
+# ikhtiyar — Python dependencies
+# Requires Ollama (local) and Neo4j (local) — see README.md
+
+# LLM / embeddings
+ollama
+sentence-transformers
+
+# Graph / ontology
+rdflib
+neo4j
+
+# Web / API
+fastapi
+uvicorn
+flask
+
+# Data
+numpy
+scipy
+
+# Utilities
+python-dotenv
+requests
+feedparser

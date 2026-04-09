@@ -24,6 +24,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
+from bw_arabic import bw_to_arabic, bw_root_display
+
 logger = logging.getLogger(__name__)
 
 # ── Rasm clock — 28 Arabic consonants in Abjad order (Buckwalter) ──────────
@@ -137,6 +139,16 @@ class WalkGrammar:
     intensity: float            # 0.0–1.0 modal intensity
     slot_template: str = ""     # Populated by TemplateCompiler
     gbnf_grammar: str = ""      # Populated by GBNFCompiler
+
+    @property
+    def visited_roots_arabic(self) -> list:
+        """Visited roots as Arabic script (display layer — BW stays in visited_roots)."""
+        return [bw_to_arabic(r) for r in self.visited_roots]
+
+    @property
+    def seed_roots_arabic(self) -> list:
+        """Seed roots as Arabic script."""
+        return [bw_to_arabic(r) for r in self.seed_roots]
 
 
 # ── GraphProjector ───────────────────────────────────────────────────────────

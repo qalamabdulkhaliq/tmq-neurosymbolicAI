@@ -6,6 +6,7 @@ Checks:
   2. TMQ_v12.json exists
   3. quran_root_ontology_v3.ttl exists
   4. Neo4j on :7687 (warn, not fail)
+  5. TMQ_hvt.json HVT tape (warn, not fail — degrades to BFS walk)
 
 Then starts IkhtiyarEngine + Flask on :5000
 """
@@ -13,6 +14,21 @@ Then starts IkhtiyarEngine + Flask on :5000
 import socket
 import sys
 import os
+
+# Load .env from ikhtiyar/ if present — picks up OLLAMA_MODEL, OLLAMA_URL etc.
+_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+if os.path.exists(_env_path):
+    with open(_env_path, encoding="utf-8") as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _, _v = _line.partition("=")
+                os.environ.setdefault(_k.strip(), _v.strip())
+
+# Force UTF-8 on Windows stdout so Arabic basmala prints cleanly
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 import logging
 
 logging.basicConfig(
@@ -29,6 +45,7 @@ _QUSAI_HF  = os.path.join(_BISMILLAH, "QUS-AI HF")
 
 TMQ_PATH = os.environ.get("TMQ_PATH", os.path.join(_BISMILLAH, "TMQ_v12.json"))
 TTL_PATH = os.environ.get("TTL_PATH", os.path.join(_QUSAI_HF,  "quran_root_ontology_v3.ttl"))
+HVT_PATH = os.environ.get("HVT_PATH", os.path.join(_DIR, "TMQ_hvt.json"))
 
 
 def _check_socket(host: str, port: int, timeout: float = 2.0) -> bool:
@@ -42,11 +59,13 @@ def _check_socket(host: str, port: int, timeout: float = 2.0) -> bool:
 def preflight():
     ok = True
 
-    # Ollama
+    # Model backend — Ollama only (local, GBNF-capable)
     if _check_socket("localhost", 11434):
-        logger.info("✓ Ollama reachable on :11434")
+        model = os.environ.get("OLLAMA_MODEL", "qwen2.5:32b-instruct-q4_K_M")
+        logger.info(f"✓ Ollama reachable on :11434 — model: {model}")
     else:
-        logger.error("✗ Ollama not reachable on :11434 — start Ollama first")
+        logger.error("✗ Ollama not running — start with: ollama serve")
+        logger.error("  Then pull model: ollama pull qwen2.5:32b-instruct-q4_K_M")
         ok = False
 
     # TMQ
@@ -72,6 +91,13 @@ def preflight():
     else:
         logger.warning("⚠ Neo4j not reachable on :7687 — graph memory will be disabled")
 
+    # HVT tape (warn only — engine degrades to deliberate() BFS walk without it)
+    if os.path.exists(HVT_PATH):
+        size_mb = os.path.getsize(HVT_PATH) / 1_000_000
+        logger.info(f"✓ HVT tape found ({size_mb:.0f} MB)")
+    else:
+        logger.warning(f"⚠ TMQ_hvt.json not found at {HVT_PATH} — falling back to BFS walk")
+
     return ok
 
 
@@ -87,6 +113,7 @@ def main():
     print("  http://localhost:5820/sparql — SPARQL endpoint")
     print()
 
+    import uvicorn
     from engine import IkhtiyarEngine
     from server import create_app
 
@@ -94,7 +121,7 @@ def main():
     engine.start()
 
     app = create_app(engine)
-    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
+    uvicorn.run(app, host="0.0.0.0", port=5000, log_level="info")
 
 
 if __name__ == "__main__":

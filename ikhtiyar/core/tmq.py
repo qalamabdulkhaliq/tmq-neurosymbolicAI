@@ -60,11 +60,34 @@ class TMQGraph:
 
     # ── Root → nodes ──────────────────────────────────────────────────────────
 
+    # Roots that resolve to the divine name / SOURCE node.
+    # Since SOURCE = Allah is a foundational axiom (not a discoverable proposition),
+    # walking FROM these nodes as peers to other roots is ontologically wrong.
+    # They are acknowledged in the prompt separately, not BFS-expanded.
+    _SOURCE_ROOTS = {"Alh", "ALh", "alh", "allah", "Allah"}
+
     def roots_to_nodes(self, roots: list[str]) -> list[str]:
-        """Return all node IDs whose root field matches any of the given roots."""
-        result = []
+        """
+        Return deduplicated node IDs whose root field matches any of the given roots.
+        SOURCE roots (Alh / Allah) are excluded — SOURCE is an axiom, not a walk target.
+        """
+        seen: set[str] = set()
+        result: list[str] = []
         for r in roots:
-            result.extend(self._root_index.get(r, []))
+            if r in self._SOURCE_ROOTS:
+                continue  # SOURCE = Allah is presupposed, not walked
+            found = self._root_index.get(r, [])
+            if not found:
+                # Case-insensitive fallback
+                r_lower = r.lower()
+                for key in self._root_index:
+                    if key.lower() == r_lower:
+                        found = self._root_index[key]
+                        break
+            for nid in found:
+                if nid not in seen:
+                    seen.add(nid)
+                    result.append(nid)
         return result
 
     # ── Node neighbourhood ────────────────────────────────────────────────────
@@ -86,7 +109,7 @@ class TMQGraph:
         seen = set()
         result = []
         for e in self.edges_for_node(node_id, families):
-            for nid in e["nodes"]:
+            for nid in (e["nodes"] or []):
                 if nid != node_id and nid not in seen:
                     seen.add(nid)
                     result.append({
@@ -158,7 +181,7 @@ class TMQGraph:
                         if layer.get("category"):
                             onto_cats.append(layer["category"])
 
-                for nb_id in e["nodes"]:
+                for nb_id in (e["nodes"] or []):
                     if nb_id not in seen_nodes:
                         seen_nodes.add(nb_id)
                         frontier.append((nb_id, d + 1))
@@ -182,6 +205,7 @@ class TMQGraph:
     def describe_walk(self, walk_result: dict) -> str:
         """
         Convert a walk() result into a compact string suitable for LLM prompt injection.
+        Surfaces actual ayat segments first — graph stats are secondary navigation.
         """
         if not walk_result.get("seed_nodes"):
             return "[TMQ: no matching nodes for these roots]"
@@ -192,26 +216,41 @@ class TMQGraph:
         addr = ms.get("address_modes", [])
         intensity = ms.get("intensity_avg")
 
-        lines = [
-            f"[TMQ HYPERGRAPH CONTEXT]",
-            f"Seed nodes: {len(walk_result['seed_nodes'])} | "
-            f"Subgraph: {len(walk_result['visited_nodes'])} nodes, "
-            f"{len(walk_result['visited_edges'])} hyperedges",
-        ]
+        lines = ["[TMQ — AYAT CONTEXT]"]
 
+        # ── Ayat first: group seed nodes by verse, show Arabic form + root ──
+        verse_map: dict[tuple, list[str]] = {}
+        for nid in walk_result["seed_nodes"]:
+            attrs = walk_result["visited_nodes"].get(nid) or self._nodes.get(nid, {})
+            loc = attrs.get("loc")
+            form = attrs.get("form", "")
+            root = attrs.get("root", "")
+            if loc and len(loc) >= 2 and form:
+                key = (loc[0], loc[1])   # (surah, ayah)
+                verse_map.setdefault(key, []).append(
+                    f"{form}[{root}]" if root else form
+                )
+        for (s, v), segs in sorted(verse_map.items())[:6]:
+            lines.append(f"  {s}:{v}  {' '.join(segs)}")
+
+        # ── Graph stats: navigation context, not subject ──
+        _skip_exact   = {"TART", "WAQF", "FASILA", "FASILA_CROSS", "JUZ", "SAJDAH", "RUKU"}
+        _skip_pfx     = ("SYN_", "MORPH_")
         if fc:
-            top = sorted(fc.items(), key=lambda x: -x[1])[:6]
-            lines.append("Edge families: " + ", ".join(f"{f}({n})" for f, n in top))
+            top = [(f, n) for f, n in sorted(fc.items(), key=lambda x: -x[1])
+                   if f.upper() not in _skip_exact
+                   and not any(f.upper().startswith(p) for p in _skip_pfx)][:4]
+            if top:
+                lines.append("Families: " + ", ".join(f"{f}({n})" for f, n in top))
 
         if onto:
-            lines.append("Maqasid categories: " + ", ".join(onto[:5]))
+            lines.append("Maqasid: " + ", ".join(onto[:4]))
 
         addr_labels = {1: "singular", 2: "dual", 3: "plural", 4: "majestic"}
         if addr:
-            labels = [addr_labels.get(a, str(a)) for a in addr]
-            lines.append("Address modes: " + ", ".join(labels))
+            lines.append("Address: " + ", ".join(addr_labels.get(a, str(a)) for a in addr))
 
         if intensity is not None:
-            lines.append(f"Modal intensity: {intensity}")
+            lines.append(f"Intensity: {intensity:.2f}")
 
         return "\n".join(lines)

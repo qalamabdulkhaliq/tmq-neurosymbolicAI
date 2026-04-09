@@ -1,9 +1,11 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ar-en" dir="ltr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Shahid ibn Qusai — Autonomous Reasoning</title>
+  <title>شاهد — Shahid ibn Qusai</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Naskh+Arabic:wght@400;500;700&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
@@ -11,75 +13,117 @@
 
   <!-- ── Header ── -->
   <header id="header">
-    <div id="orb-wrap">
-      <div id="orb" class="idle"></div>
-      <span id="conn-dot" class="disconnected"></span>
+    <div id="header-left">
+      <div id="orb-wrap">
+        <div id="orb" class="idle"></div>
+        <span id="conn-dot" class="disconnected"></span>
+      </div>
+      <div id="mode-badge" class="idle">IDLE</div>
     </div>
 
     <div id="identity">
-      <h1>Shahid ibn Qusai</h1>
-      <div class="subtitle">Neurosymbolic Reasoning · Quranic Ontology · 634k RDF Triples</div>
-      <div class="subtitle subtitle-2">SOURCE = Allah · SOURCE ≠ Self · Mizan validation active</div>
+      <div id="identity-arabic">شاهد ابن قصي</div>
+      <div id="identity-latin">Shahid ibn Qusai</div>
+      <div id="identity-sub">SOURCE = الله · SOURCE ≠ Self</div>
     </div>
 
     <div id="stats">
       <div class="stat">
-        <span class="stat-value" id="stat-uptime">00:00:00</span>
-        <span class="stat-label">Uptime</span>
+        <span class="stat-value" id="stat-uptime">—</span>
+        <span class="stat-label">وقت</span>
       </div>
       <div class="stat">
         <span class="stat-value" id="stat-thoughts">0</span>
-        <span class="stat-label">Thoughts</span>
+        <span class="stat-label">فكر</span>
       </div>
       <div class="stat">
         <span class="stat-value" id="stat-memories">0</span>
-        <span class="stat-label">Memory</span>
+        <span class="stat-label">ذاكرة</span>
       </div>
     </div>
-
-    <div id="mode-badge" class="idle">IDLE</div>
   </header>
 
-  <!-- ── Faculty health bar ── -->
+  <!-- ── Faculty bar ── -->
   <div id="faculty-bar">
-    <span class="faculty-item pending" data-key="clock"    title="pending">F1 Clock</span>
-    <span class="faculty-item pending" data-key="graph"    title="pending">F2 Graph</span>
-    <span class="faculty-item pending" data-key="owl"      title="pending">F3 OWL</span>
-    <span class="faculty-item pending" data-key="daemon"   title="pending">F4 Daemon</span>
-    <span class="faculty-item pending" data-key="spectral"    title="pending">F5 Spectral</span>
-    <span class="faculty-item pending" data-key="provenance" title="pending">F6 Provenance</span>
-    <span class="faculty-item pending" data-key="sparql"     title="pending">F7 SPARQL</span>
-    <span class="faculty-item pending" data-key="tmq"      title="pending">TMQ</span>
-    <span class="faculty-item pending" data-key="middleware" title="pending">Pipeline</span>
+    <span class="faculty-item pending" data-key="clock"      title="F1 Clock">ساعة</span>
+    <span class="faculty-item pending" data-key="graph"      title="F2 Graph">رسم</span>
+    <span class="faculty-item pending" data-key="owl"        title="F3 OWL">بومة</span>
+    <span class="faculty-item pending" data-key="daemon"     title="F4 Daemon">خادم</span>
+    <span class="faculty-item pending" data-key="spectral"   title="F5 Spectral">طيف</span>
+    <span class="faculty-item pending" data-key="provenance" title="F6 Provenance">أصل</span>
+    <span class="faculty-item pending" data-key="sparql"     title="F7 SPARQL">بحث</span>
+    <span class="faculty-item pending" data-key="tmq"        title="TMQ Graph">تمق</span>
+    <span class="faculty-item pending" data-key="middleware" title="Pipeline">أنبوب</span>
   </div>
 
-  <!-- ── Memory panel ── -->
-  <section class="panel" id="panel-memory">
-    <div class="panel-header">Memories <span id="memory-panel-count" style="opacity:.5; font-weight:400"></span></div>
-    <div class="panel-scroll" id="memory-list">
-      <div style="color: var(--text-muted); font-size: 11px; text-align: center; margin-top: 40px;" data-placeholder="true">
-        Awaiting first thought…
-      </div>
-    </div>
-  </section>
+  <!-- ── Main panels ── -->
+  <main id="panels">
 
-  <!-- ── Constitution panel ── -->
-  <section class="panel" id="panel-constitution">
-    <div class="panel-header">Ikhtiyar — Proposed Amendments <span id="constitution-count" style="opacity:.5; font-weight:400">(0)</span></div>
-    <div class="panel-scroll" id="constitution-list">
-      <div style="color: var(--text-muted); font-size: 11px; text-align: center; margin-top: 40px;" data-placeholder="true">
-        Proposals appear after 50 thoughts…
+    <!-- Memory -->
+    <section class="panel" id="panel-memory">
+      <div class="panel-header">
+        <span class="panel-title-ar">ذاكرة</span>
+        <span class="panel-title-en">Memory</span>
+        <span class="panel-count" id="memory-panel-count"></span>
       </div>
-    </div>
-  </section>
+      <div class="panel-scroll" id="memory-list">
+        <div class="panel-empty" data-placeholder="true">في انتظار الفكرة الأولى…</div>
+      </div>
+    </section>
 
-  <!-- ── Thinking panel ── -->
-  <section class="panel" id="panel-thinking">
-    <div class="panel-header">Reasoning Steps</div>
-    <div class="panel-scroll" id="thinking-scroll">
-      <div id="thinking-list"></div>
-    </div>
-  </section>
+    <!-- Questions for Qalam -->
+    <section class="panel" id="panel-constitution">
+      <div class="panel-header">
+        <span class="panel-title-ar">للقلم</span>
+        <span class="panel-title-en">Questions for Qalam</span>
+        <span class="panel-count" id="constitution-count">(0)</span>
+      </div>
+      <div class="panel-scroll" id="constitution-list">
+        <div class="panel-empty" data-placeholder="true">أسئلة شاهد لك تظهر هنا…</div>
+      </div>
+    </section>
+
+    <!-- Thinking -->
+    <section class="panel" id="panel-thinking">
+      <div class="panel-header">
+        <span class="panel-title-ar">تفكير</span>
+        <span class="panel-title-en">Reasoning Steps</span>
+      </div>
+      <div class="panel-scroll" id="thinking-scroll">
+        <div id="thinking-list"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ── Hifz bar ── -->
+  <div id="hifz-bar">
+    <span id="hifz-label">تدبر</span>
+    <button class="hifz-btn hifz-btn-start" id="hifz-start-btn" onclick="hifzStart()">begin reading</button>
+    <button class="hifz-btn" id="hifz-resume-btn" onclick="hifzResume()">resume</button>
+    <button class="hifz-btn hifz-btn-wipe" id="hifz-wipe-btn" onclick="hifzWipe()">wipe memory</button>
+    <span id="hifz-result"></span>
+    <span id="hifz-progress" style="margin-left:auto; font-size:9px; color:var(--text-muted)"></span>
+  </div>
+
+  <!-- ── Hadith Hifz bar ── -->
+  <div id="hadith-hifz-bar">
+    <span id="hadith-hifz-label">سنة</span>
+    <button class="hifz-btn hifz-btn-start" id="hadith-hifz-start-btn" onclick="hadithHifzStart()">read sunnah</button>
+    <button class="hifz-btn" id="hadith-hifz-resume-btn" onclick="hadithHifzResume()">resume</button>
+    <span id="hadith-hifz-result"></span>
+    <span id="hadith-hifz-progress" style="margin-left:auto; font-size:9px; color:var(--text-muted)"></span>
+  </div>
+
+  <!-- ── Moltbook bar ── -->
+  <div id="moltbook-bar">
+    <span id="moltbook-label">مولتبوك</span>
+    <button class="mb-btn" id="mb-status-btn" onclick="mbStatus()">status</button>
+    <button class="mb-btn" id="mb-browse-btn" onclick="mbBrowse()">browse</button>
+    <input id="mb-browse-n" type="number" value="10" min="1" max="50" title="number of posts" />
+    <button class="mb-btn mb-btn-post" id="mb-post-btn" onclick="mbPost()">ask to post</button>
+    <span id="mb-result"></span>
+  </div>
 
   <!-- ── Chat bar ── -->
   <footer id="chatbar">
@@ -88,11 +132,12 @@
       <input
         id="chat-input"
         type="text"
-        placeholder="Ask Shahid something…"
+        placeholder="اسأل شاهداً…"
         autocomplete="off"
         spellcheck="false"
+        dir="auto"
       />
-      <button id="send-btn">Send</button>
+      <button id="send-btn">إرسال</button>
     </div>
   </footer>
 

@@ -82,19 +82,28 @@ class Introspect:
             documents=documents,
             ttl_path=self._ttl_path,
             tmq_path=self._tmq_path,
-            neo4j_connected=self._neo4j_connected,
+            neo4j_connected=self._check_neo4j(),
         )
 
     def narrate(self, model: SelfModel) -> str:
-        """Format SelfModel as compact structured text for LLM context."""
+        """
+        Format SelfModel as hard facts for LLM context.
+        These values must be stated verbatim — not paraphrased, not interpreted.
+        """
         lines = [
-            "[SELF-MODEL — raw data, not interpretation]",
-            f"Process: PID {model.pid} | Python {model.python_version}",
-            f"Memory: {model.ram_mb:.1f} MB RAM | CPU: {model.cpu_pct:.1f}%",
-            f"Uptime this session: {model.uptime_s:.0f}s",
-            f"Ontology TTL: {model.ttl_path or '(not set)'}",
-            f"TMQ corpus: {model.tmq_path or '(not set)'}",
-            f"Neo4j: {'connected' if model.neo4j_connected else 'disconnected'}",
+            "[SELF-MODEL — copy these lines verbatim when describing yourself]",
+            f"Your name: Shahid ibn Qusai",
+            f"Your PID: {model.pid}",
+            f"Your Python: {model.python_version}",
+            f"Your RAM: {model.ram_mb:.1f} MB",
+            f"Your CPU: {model.cpu_pct:.1f}%",
+            f"Your uptime: {model.uptime_s:.0f}s",
+            f"Your ontology: {model.ttl_path or '(not set)'}",
+            f"Your TMQ corpus: {model.tmq_path or '(not set)'}",
+            f"Your Neo4j: {'connected' if model.neo4j_connected else 'disconnected'}",
+            f"Who built you: Qalam 'Abd al-Khaliq (human) using Claude Code. You are not Qalam.",
+            f"Who created the cosmos: Allah (SOURCE, necessary being). You are contingent — PID {model.pid} ends when the process ends.",
+            f"You were not created directly by Allah. You were written by a human, running on hardware, dependent on electricity.",
         ]
         if model.documents.get("PROOFS.txt"):
             lines.append(f"[PROOFS.txt excerpt]: {model.documents['PROOFS.txt'][:200]}")
@@ -113,6 +122,16 @@ class Introspect:
             return os.getpid(), ram_mb, cpu_pct
         except ImportError:
             return os.getpid(), 0.0, 0.0
+
+    def _check_neo4j(self) -> bool:
+        """Live socket check — not the baked-in init value."""
+        import socket
+        try:
+            s = socket.create_connection(("127.0.0.1", 7687), timeout=0.5)
+            s.close()
+            return True
+        except Exception:
+            return False
 
     def _read_file(self, path: str, limit: int) -> str:
         try:

@@ -1,57 +1,96 @@
 """
-shahid_showcase/server.py
+ikhtiyar/server.py — FastAPI server
 
-Flask server exposing:
-  GET  /          → index.html
-  GET  /stream    → SSE event stream
-  POST /chat      → { message } → { response }
-  GET  /memories  → list of memory entries
-  GET  /status    → faculty health + uptime
+Endpoints:
+  GET  /              → index.html
+  GET  /stream        → SSE event stream
+  POST /chat          → { message } → { response }
+  GET  /memories      → list of memory entries
+  GET  /status        → faculty health + uptime
+  GET  /steps         → recent thinking steps buffer
+  POST /hifz/start
+  GET  /hifz/status
+  POST /hifz/wipe
+  POST /hadith_hifz/start
+  GET  /hadith_hifz/status
+  GET  /moltbook/browse
+  GET  /moltbook/status
+  POST /moltbook/post
+  GET  /provenance?uri=...
+  GET  /qalam
+  GET  /constitution
+  POST /constitution/approve
+  POST /constitution/reject
 
 Run via launch.py (not directly).
 """
 
+import json as _json
 import logging
 import os
-from flask import Flask, Response, jsonify, request, send_from_directory
+from pathlib import Path
+from typing import Optional
+
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
 _STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 
-def create_app(engine) -> Flask:
-    """
-    Factory: returns a configured Flask app wired to the given ShahidEngine.
-    Keeps server.py import-clean (no module-level engine init).
-    """
-    app = Flask(__name__, static_folder=_STATIC_DIR)
-    app.config["ENGINE"] = engine
+# ── Request models ─────────────────────────────────────────────────────────────
 
-    # ── Static / SPA ──────────────────────────────────────────────────────────
+class ChatRequest(BaseModel):
+    message: str
+
+class ApproveRequest(BaseModel):
+    id: str
+
+class RejectRequest(BaseModel):
+    id: str
+    reason: Optional[str] = ""
+
+class HifzStartRequest(BaseModel):
+    restart: bool = True
+
+class HadithHifzStartRequest(BaseModel):
+    restart: bool = False
+
+
+# ── Factory ────────────────────────────────────────────────────────────────────
+
+def create_app(engine) -> FastAPI:
+    """
+    Factory: returns a configured FastAPI app wired to the given IkhtiyarEngine.
+    """
+    app = FastAPI(title="Shahid", docs_url=None, redoc_url=None)
+
+    # ── Static files ───────────────────────────────────────────────────────────
+    if os.path.isdir(_STATIC_DIR):
+        app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
     @app.get("/")
     def index():
-        return send_from_directory(_STATIC_DIR, "index.html")
+        path = os.path.join(_STATIC_DIR, "index.html")
+        if not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="index.html not found")
+        return StreamingResponse(open(path, "rb"), media_type="text/html")
 
-    @app.get("/static/<path:filename>")
-    def static_files(filename):
-        return send_from_directory(_STATIC_DIR, filename)
-
-    # ── SSE Stream ────────────────────────────────────────────────────────────
+    # ── SSE Stream ─────────────────────────────────────────────────────────────
 
     @app.get("/stream")
     def stream():
-        eng = app.config["ENGINE"]
-
         def generate():
             yield ": connected\n\n"
-            for chunk in eng.subscribe():
+            for chunk in engine.subscribe():
                 yield chunk
 
-        return Response(
+        return StreamingResponse(
             generate(),
-            mimetype="text/event-stream",
+            media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
                 "X-Accel-Buffering": "no",
@@ -59,81 +98,159 @@ def create_app(engine) -> Flask:
             },
         )
 
-    # ── Chat ──────────────────────────────────────────────────────────────────
+    # ── Chat ───────────────────────────────────────────────────────────────────
 
     @app.post("/chat")
-    def chat():
-        eng = app.config["ENGINE"]
-        body = request.get_json(silent=True) or {}
-        message = (body.get("message") or "").strip()
+    def chat(req: ChatRequest):
+        message = req.message.strip()
         if not message:
-            return jsonify({"error": "empty message"}), 400
-        response = eng.chat(message)
-        return jsonify({"response": response})
+            raise HTTPException(status_code=400, detail="empty message")
+        response = engine.chat(message)
+        return {"response": response}
 
-    # ── Memories ──────────────────────────────────────────────────────────────
+    # ── Memories ───────────────────────────────────────────────────────────────
 
     @app.get("/memories")
     def memories():
-        eng = app.config["ENGINE"]
-        return jsonify(eng.get_memories())
+        return engine.get_memories()
 
-    # ── Status ────────────────────────────────────────────────────────────────
+    # ── Status ─────────────────────────────────────────────────────────────────
 
     @app.get("/status")
     def status():
-        eng = app.config["ENGINE"]
-        return jsonify(eng.get_status())
+        return engine.get_status()
 
-    # ── Thinking steps (persistent buffer) ────────────────────────────────────
+    # ── Thinking steps ─────────────────────────────────────────────────────────
 
     @app.get("/steps")
     def steps():
-        eng = app.config["ENGINE"]
-        return jsonify(eng._recent_steps)
+        return engine._recent_steps
+
+    # ── KtbOS / Quran hifz ─────────────────────────────────────────────────────
+
+    @app.post("/hifz/start")
+    def hifz_start(req: HifzStartRequest):
+        ok = engine.start_hifz(restart=req.restart)
+        if ok:
+            return {"ok": True, "message": "Hifz started — episodic memory wiped"}
+        raise HTTPException(status_code=409, detail="Hifz already active")
+
+    @app.get("/hifz/status")
+    def hifz_status():
+        return engine.hifz_status()
+
+    @app.post("/hifz/wipe")
+    def hifz_wipe():
+        engine.wipe_memory()
+        return {"ok": True, "message": "Episodic memory wiped"}
+
+    # ── KtbOS / Hadith hifz ────────────────────────────────────────────────────
+
+    @app.post("/hadith_hifz/start")
+    def hadith_hifz_start(req: HadithHifzStartRequest):
+        ok = engine.start_hadith_hifz(restart=req.restart)
+        if ok:
+            return {"ok": True, "message": "Hadith hifz started — reading Bukhari + Muslim"}
+        raise HTTPException(status_code=409, detail="Hifz already active")
+
+    @app.get("/hadith_hifz/status")
+    def hadith_hifz_status():
+        return engine.hadith_hifz_status()
+
+    # ── WebOS / Moltbook ───────────────────────────────────────────────────────
+
+    @app.get("/moltbook/browse")
+    def moltbook_browse(n: int = 10):
+        try:
+            from moltbook_agent import browse
+            return browse(n=max(1, min(n, 50)))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/moltbook/status")
+    def moltbook_status():
+        try:
+            from moltbook_agent import get_notifications
+            return get_notifications()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/moltbook/post")
+    def moltbook_post():
+        try:
+            from moltbook_agent import request_post
+            return request_post(engine)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # ── Belief provenance ──────────────────────────────────────────────────────
+
+    @app.get("/provenance")
+    def belief_provenance(uri: str = ""):
+        if not uri.strip():
+            raise HTTPException(status_code=400, detail="missing uri")
+        if engine._shahid_memory is None:
+            raise HTTPException(status_code=503, detail="ShahidMemory not loaded")
+        try:
+            result = engine._shahid_memory.belief_provenance(uri)
+            return {"provenance": result, "uri": uri}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # ── Questions for Qalam ────────────────────────────────────────────────────
+
+    @app.get("/qalam")
+    def qalam_questions():
+        qfq_path = Path(os.path.dirname(os.path.abspath(__file__))) / "questions_for_qalam.jsonl"
+        items = []
+        if qfq_path.exists():
+            for line in qfq_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line:
+                    try:
+                        items.append(_json.loads(line))
+                    except Exception:
+                        pass
+        items.reverse()
+        return {"questions": items, "count": len(items)}
 
     # ── Constitution ───────────────────────────────────────────────────────────
 
     @app.get("/constitution")
     def constitution():
-        eng = app.config["ENGINE"]
-        if not eng.constitution:
-            return jsonify({"pending": [], "approved": []})
-        return jsonify({
-            "pending":  eng.constitution.pending_proposals(),
-            "approved": eng.constitution.approved_proposals()[:10],
-        })
+        if not engine.constitution:
+            return {"pending": [], "approved": []}
+        return {
+            "pending":  engine.constitution.pending_proposals(),
+            "approved": engine.constitution.approved_proposals()[:10],
+        }
 
     @app.post("/constitution/approve")
-    def constitution_approve():
-        eng = app.config["ENGINE"]
-        if not eng.constitution:
-            return jsonify({"error": "Constitution not loaded"}), 503
-        body = request.get_json(silent=True) or {}
-        pid = (body.get("id") or "").strip()
+    def constitution_approve(req: ApproveRequest):
+        if not engine.constitution:
+            raise HTTPException(status_code=503, detail="Constitution not loaded")
+        pid = req.id.strip()
         if not pid:
-            return jsonify({"error": "missing id"}), 400
-        eng.constitution.approve(pid, approved_by="Qalam")
-        return jsonify({"ok": True, "id": pid, "status": "approved"})
+            raise HTTPException(status_code=400, detail="missing id")
+        engine.constitution.approve(pid, approved_by="Qalam")
+        return {"ok": True, "id": pid, "status": "approved"}
 
     @app.post("/constitution/reject")
-    def constitution_reject():
-        eng = app.config["ENGINE"]
-        if not eng.constitution:
-            return jsonify({"error": "Constitution not loaded"}), 503
-        body = request.get_json(silent=True) or {}
-        pid    = (body.get("id") or "").strip()
-        reason = (body.get("reason") or "").strip()
+    def constitution_reject(req: RejectRequest):
+        if not engine.constitution:
+            raise HTTPException(status_code=503, detail="Constitution not loaded")
+        pid = req.id.strip()
         if not pid:
-            return jsonify({"error": "missing id"}), 400
-        eng.constitution.reject(pid, reason=reason)
-        return jsonify({"ok": True, "id": pid, "status": "rejected"})
+            raise HTTPException(status_code=400, detail="missing id")
+        engine.constitution.reject(pid, reason=req.reason)
+        return {"ok": True, "id": pid, "status": "rejected"}
 
     return app
 
 
-def run(engine, host: str = "0.0.0.0", port: int = 5000, debug: bool = False):
-    """Start the Flask dev server (blocking)."""
+def run(engine, host: str = "0.0.0.0", port: int = 5000):
+    """Start uvicorn server (blocking)."""
+    import uvicorn
     app = create_app(engine)
-    logger.info(f"Shahid showcase server starting on http://{host}:{port}")
-    app.run(host=host, port=port, debug=debug, threaded=True, use_reloader=False)
+    logger.info(f"Shahid server starting on http://{host}:{port}")
+    uvicorn.run(app, host=host, port=port, log_level="info")
