@@ -133,6 +133,15 @@ def parse_qac_line(line: str) -> dict | None:
             is_vn = True
         elif p == "PCPL":
             pass
+        elif len(p) == 2 and p[0] in "123" and p[1] in "SDP":
+            # Combined person+number like "3S", "2P", "1D"
+            person = p[0]
+            number = p[1]
+        elif len(p) == 3 and p in ("1MS", "1FS", "2MS", "2FS", "3MS", "3FS", "1MP", "1FP", "2MP", "2FP", "3MP", "3FP"):
+            # Extended person+gender+number like "1MS", "2FS"
+            person = p[0]
+            gender = p[1]
+            number = p[2]
 
     # ACT|PCPL and PASS|PCPL detection
     feat_str = "|".join(feat_parts)
