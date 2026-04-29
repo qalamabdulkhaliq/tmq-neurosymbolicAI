@@ -1,5 +1,6 @@
 # القرآن كبرنامج — Quranic Native RDF DATA Division
 ## Design Specification — Approach 3: Full Hypergraph RDF with Named Graphs
+*Output file: `ikhtiyar/QS.ttl` (Quranic Sultan / Quran Script)*
 
 *بسم الله الرحمن الرحيم*
 *Authored: 2026-04-29*
@@ -23,7 +24,7 @@ The grounding failure this produces: a claim can be locally plausible (correct t
 
 ## 2. Objective
 
-Build `ikhtiyar/quran_native.ttl` — an Arabic-native RDF graph that:
+Build `ikhtiyar/QS.ttl` (Quranic Sultan / Quran Script) — an Arabic-native RDF graph that:
 
 1. Uses Arabic script as canonical identifier throughout (Buckwalter as legacy literal only)
 2. Encodes the QAC TAG vocabulary as typed RDF predicates (not labels)
@@ -151,6 +152,49 @@ For non-root segments (prefixes, suffixes with no ROOT field), the subject is a 
 | RET | pos:RET | Retraction |
 | SUR | pos:SUR | Surprise |
 | ACC | pos:ACC | Accompaniment |
+
+### Layer 1.5: Classical Grammar Enrichment (recovered from FEATURES)
+
+QAC's TAG column folds four classically distinct Arabic categories into N or ADJ. The compiler recovers them from the FEATURES column and emits enriched predicates. These sit between Layer 1 (TAG) and Layer 2 (verb form) in the triple structure.
+
+**VN — مصدر (verbal noun)**
+FEATURES flag: `VN`. Emits `pos:VN` triple. Represents the abstract concept of an action, not its occurrence. Epistemic cluster: description.
+```turtle
+GRAPH ayah:2:2 { root:هدى  pos:VN  word:2:2:3 . }
+```
+
+**ACT_PCPL — اسم فاعل (active participle)**
+FEATURES flag: `ACT|PCPL`. Emits `pos:ACT_PCPL` triple. 2,974 instances. Describes an ongoing agent.
+```turtle
+GRAPH ayah:1:4 { root:ملك  pos:ACT_PCPL  word:1:4:1 . }
+```
+
+**PASS_PCPL — اسم مفعول (passive participle)**
+FEATURES flag: `PASS|PCPL`. Emits `pos:PASS_PCPL` triple. 551 instances. Describes a recipient of action.
+
+**NUM — عدد (numeral)**
+QAC assigns no flag. Compiler matches FORM against a compiled lexicon of ~150 Quranic numeral forms. Emits `pos:NUM` triple. Epistemic cluster: certainty (quantitative claims must be exact).
+
+**Inna-sisters sub-predicates — ACC with SP: field**
+ACC-tagged particles carry a `SP:` field identifying the specific particle. Compiler extracts SP: and emits a sub-predicate alongside the base `pos:ACC`:
+
+| SP: value | Sub-predicate | Semantic function | Epistemic cluster |
+|-----------|--------------|-------------------|-------------------|
+| SP:<in~ / SP:>an~ | pos:ACC_IN | Assertion (إنَّ/أنَّ) | certainty |
+| SP:laEal~ | pos:ACC_LAAL | Hope (لعلَّ) | conjecture |
+| SP:layta | pos:ACC_LAYTA | Unrealizable wish (ليت) | conjecture |
+| SP:lakin~ | pos:ACC_LAKIN | Concession (لكنَّ) | description |
+| SP:ka>an~ | pos:ACC_KAANN | Similitude (كأنَّ) | description |
+
+**IMPN — اسم فعل (nominal verb)**
+Two instances in the Quran. Genuine classical category — nominal form with imperative force.
+- `20:97` مِسَاسَ (root م-س-س) — prohibition formula لا مساس
+- `69:19` هَاؤُمُ (no root) — presentation imperative. Compiler handles rootless IMPN: word-instance becomes its own subject.
+
+**Space-in-FORM repair (37:130:3)**
+Line `(37:130:3:1) <ilo yaAsiyna PN ...` — space inside FORM field causes TSV column shift. Repair rule: if TAG ∉ valid-tag-set, join columns 2+3 as FORM, shift TAG and FEATURES left. Log repair. إِلْيَاسِينَ is a proper noun (PN), the name of the Prophet Ilyas عليه السلام in Surah As-Saffat.
+
+---
 
 ### Layer 2: Verb Form as Typed Predicate
 
@@ -368,11 +412,18 @@ ORDER BY ?ayahGraph ?loc
    a. Skip comment lines (#)
    b. Parse: LOCATION | FORM | TAG | FEATURES
    c. Extract: loc=(s,v,w,seg), tag, root_bw, verb_form, morphological attrs
-   d. Convert root_bw → root_arabic via bw_to_arabic()
-   e. Convert FORM → Arabic script via bw_to_arabic()
-   f. Emit Layer 1 triple into named graph ayah:s:v
-   g. If verb_form present: emit Layer 2 triple into named graph ayah:s:v
-   h. Emit Layer 3 attribute triples into default graph
+   d. Space-in-FORM repair: if TAG ∉ valid-tag-set, join col2+col3 as FORM, shift TAG/FEATURES left, log repair
+   e. Convert root_bw → root_arabic via bw_to_arabic()
+   f. Convert FORM → Arabic script via bw_to_arabic()
+   g. Emit Layer 1 triple into named graph ayah:s:v
+   g1. If FEATURES contains VN flag → emit pos:VN triple (Layer 1.5)
+   g2. If FEATURES contains ACT|PCPL → emit pos:ACT_PCPL triple (Layer 1.5)
+   g3. If FEATURES contains PASS|PCPL → emit pos:PASS_PCPL triple (Layer 1.5)
+   g4. If FORM matches numeral lexicon → emit pos:NUM triple (Layer 1.5)
+   g5. If TAG=ACC and SP: field present → emit ACC sub-predicate (Layer 1.5)
+   g6. If TAG=IMPN and no ROOT field → use word-instance URI as its own RDF subject
+   h. If verb_form present: emit Layer 2 triple into named graph ayah:s:v
+   i. Emit Layer 3 attribute triples into default graph
    i. Accumulate root nodes (deduplicated by Arabic script)
 3. Emit root nodes with bw literal + frequency count
 4. Run epistemic_clusters.py → assign epi:cluster to each root node
