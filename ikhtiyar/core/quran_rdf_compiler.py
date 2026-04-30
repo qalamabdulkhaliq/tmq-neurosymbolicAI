@@ -22,6 +22,34 @@ from bw_arabic import bw_to_arabic
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
+
+def to_arabic_root(bw: str) -> str:
+    """Convert Buckwalter root string to Arabic script. Returns empty string if bw is empty."""
+    if not bw:
+        return ""
+    return bw_to_arabic(bw)
+
+
+# Quranic numeral roots (Arabic script) — QAC does not flag these as NUM
+NUMERAL_ROOTS: frozenset = frozenset([
+    "وحد",  # واحد — one
+    "ثنى",  # اثنان — two
+    "ثلث",  # ثلاثة — three
+    "ربع",  # أربعة — four
+    "خمس",  # خمسة — five
+    "سدس",  # ستة — six
+    "سبع",  # سبعة — seven
+    "ثمن",  # ثمانية — eight
+    "تسع",  # تسعة — nine
+    "عشر",  # عشرة — ten
+    "عشرن", # عشرون — twenty
+    "ثلثن", # ثلاثون — thirty
+    "مئة",  # مئة — hundred
+    "ألف",  # ألف — thousand
+    "ألوف", # آلاف — thousands
+    "نصف",  # نصف — half
+])
+
 VALID_TAGS = frozenset([
     "N", "V", "PN", "ADJ", "PRON", "P", "CONJ", "DET", "REL", "DEM",
     "T", "LOC", "IMPV", "INL", "NEG", "PRO", "CERT", "COND", "VOC",

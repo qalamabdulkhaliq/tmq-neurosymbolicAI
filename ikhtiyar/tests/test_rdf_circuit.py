@@ -55,3 +55,25 @@ def test_comment_line_returns_none():
 def test_header_line_returns_none():
     result = parse_qac_line("LOCATION\tFORM\tTAG\tFEATURES")
     assert result is None
+
+
+# ── Buckwalter→Arabic Conversion Tests ──────────────────────────────────────
+
+def test_buckwalter_root_conversion():
+    from core.quran_rdf_compiler import to_arabic_root
+    assert to_arabic_root("Elm") == "علم"
+    assert to_arabic_root("rHm") == "رحم"
+    assert to_arabic_root("mlk") == "ملك"
+
+
+# ── Numeral Lexicon Tests ───────────────────────────────────────────────────
+
+def test_numeral_root_detected():
+    from core.quran_rdf_compiler import NUMERAL_ROOTS
+    assert "وحد" in NUMERAL_ROOTS  # واحد family
+    assert "ثلث" in NUMERAL_ROOTS  # ثلاثة family
+
+
+def test_non_numeral_not_in_lexicon():
+    from core.quran_rdf_compiler import NUMERAL_ROOTS
+    assert "علم" not in NUMERAL_ROOTS
