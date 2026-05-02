@@ -515,20 +515,22 @@ class IkhtiyarEngine:
 
     def _init_circuit(self):
         """
-        Load CircuitEvaluator from compiled HVT tape.
-        Called in _heavy_init() — builds static circuit + PageRank.
-        Gracefully degrades: engine falls back to deliberate() BFS walk.
+        Load RDFCircuit from QS.ttl (Arabic-native hypergraph).
+        Falls back gracefully — engine continues with BFS deliberate() if absent.
         """
-        if not os.path.isfile(self._hvt_path):
-            logger.info("CircuitEvaluator: HVT tape not found — circuit path disabled")
+        qs_path = os.path.join(_IKHTIYAR_DIR, "QS.ttl")
+        if not os.path.isfile(qs_path):
+            logger.info("RDFCircuit: QS.ttl not found — circuit path disabled")
             return
         try:
-            from core.vtransistor import CircuitEvaluator
-            self._circuit = CircuitEvaluator(self._hvt_path)
-            root_count = len(self._circuit.static._root_index)
-            logger.info(f"CircuitEvaluator: ready — {root_count} roots in static circuit")
+            from core.rdf_circuit import RDFCircuit
+            circuit = RDFCircuit(qs_path)
+            circuit.static = circuit  # shim: engine logs root count via .static._root_index
+            self._circuit = circuit
+            root_count = len(self._circuit._root_index)
+            logger.info(f"RDFCircuit: ready — {root_count} roots loaded from QS.ttl")
         except Exception as e:
-            logger.warning(f"CircuitEvaluator init failed: {e}")
+            logger.warning(f"RDFCircuit init failed: {e}")
             self._circuit = None
 
     def _init_introspect(self):
@@ -774,6 +776,21 @@ class IkhtiyarEngine:
         except Exception:
             pass
         logger.info("IkhtiyarEngine: episodic memory wiped")
+
+    def wipe_all_memory(self):
+        """Full wipe — episodic + beliefs + chains. Self-model preserved."""
+        self._memory.clear()
+        self._question_queue.clear()
+        self._asked_questions.clear()
+        self._thought_count = 0
+        if self._shahid_memory:
+            self._shahid_memory.wipe_all()
+        try:
+            stream_path = os.path.join(_IKHTIYAR_DIR, "stream_of_thought.txt")
+            open(stream_path, "w", encoding="utf-8").close()
+        except Exception:
+            pass
+        logger.info("IkhtiyarEngine: full memory wipe (episodic + beliefs + chains)")
         self._push("status", self._build_status())
 
     def start_hifz(self, restart: bool = True) -> bool:
@@ -1557,12 +1574,12 @@ class IkhtiyarEngine:
         try:
             eval_prompt = (
                 f"Q: {question}\nA: {response[:300]}\n\n"
-                f"Tag only what is genuinely warranted. Omit lines that don't apply.\n"
-                f"LEARNED: <one concrete finding>\n"
+                f"Evaluate this circuit output. Tag only what is genuinely warranted from the graph walk — not inference, not elaboration. Omit lines that don't apply.\n"
+                f"FINDING: <one concrete graph fact from the walk — a count, a family, an edge relationship>\n"
                 f"CONFIDENCE: low|medium|high\n"
                 f"MEMORY_TAG: CRITICAL|IMPORTANT|NOTABLE — <why keep this>\n"
                 f"THOUGHT_TAG: CRITICAL|IMPORTANT|NOTABLE — <why keep this chain>\n"
-                f"BELIEF: <statement determined true> | EVIDENCE: <basis> | RULING: <Quranic ref if any>"
+                f"BELIEF: <statement directly supported by the walk> | EVIDENCE: <edge family + verse count> | RULING: <Quranic ref if any>"
             )
             result = self.middleware.process_thought(eval_prompt, max_tokens=300)
             eval_text = result.get("response", "")
@@ -1590,13 +1607,15 @@ class IkhtiyarEngine:
                         tag_part = line.split("THOUGHT_TAG:", 1)[1].strip()
                         tag = tag_part.split("—")[0].strip().split()[0].upper()
                         if tag in ("CRITICAL", "IMPORTANT", "NOTABLE"):
-                            learned = ""
+                            finding = ""
                             for l2 in eval_text.splitlines():
-                                if l2.strip().startswith("LEARNED:"):
-                                    learned = l2.split("LEARNED:", 1)[1].strip()
+                                if l2.strip().startswith("FINDING:"):
+                                    finding = l2.split("FINDING:", 1)[1].strip()
+                                elif l2.strip().startswith("LEARNED:"):  # backwards compat
+                                    finding = finding or l2.split("LEARNED:", 1)[1].strip()
                             self._shahid_memory.store_thought(
                                 question=question, reasoning=response[:3000],
-                                conclusion=learned, tag=tag,
+                                conclusion=finding, tag=tag,
                                 roots=roots, thought_number=tn,
                             )
 
@@ -1637,10 +1656,10 @@ class IkhtiyarEngine:
 
     def _derive_next_question(self, eval_text: str, roots: list, delibresult=None) -> str:
         """
-        Derive next question from Shahid's own beliefs — not from an LLM suggestion.
-        Priority: belief → external test → graph structure → fallback template.
+        Derive next cycle seed from circuit findings — render directives, not philosophical questions.
+        Priority: belief verification → graph render directive → root-specific walk.
         """
-        # 1. Pull from his beliefs — pick one not recently tested
+        # 1. Pull from stored beliefs — verify against the circuit, not the LLM
         if self._shahid_memory:
             try:
                 beliefs = self._shahid_memory.recall(type_filter="belief", limit=20)
@@ -1648,29 +1667,39 @@ class IkhtiyarEngine:
                     stmt = b.get("text", "").strip()
                     if not stmt or len(stmt) < 15:
                         continue
-                    # Form a question that tests this belief against external content
                     tag = b.get("tag", "")
-                    q = f"Belief [{tag}]: {stmt[:200]} — what in the current feed or recent thought confirms or contests this?"
+                    root_hint = roots[0] if roots else ""
+                    q = (
+                        f"VERIFY — belief [{tag}]: {stmt[:150]}."
+                        + (f" Root anchor: {root_hint}." if root_hint else "")
+                        + " State what the circuit walk confirms or contradicts. No questions."
+                    )
                     if q not in self._asked_questions:
                         return q
             except Exception:
                 pass
 
-        # 2. Deliberation found interesting TMQ families — derive from those
-        if delibresult and delibresult.top_families:
+        # 2. Deliberation produced graph data — render it as a finding, not a question
+        if delibresult and delibresult.top_families and roots:
             fam = delibresult.top_families[0]
-            if roots:
-                q = f"What does the {fam} edge structure reveal about root {roots[0]}?"
+            edge_count = delibresult.walk_stats.get("edge_count", 0)
+            node_count = delibresult.walk_stats.get("node_count", 0)
+            if edge_count > 0:
+                q = (
+                    f"RENDER — root {roots[0]}, {edge_count} {fam} edges, "
+                    f"{node_count} nodes traversed. "
+                    f"State one concrete finding from this walk. Not a question — a finding."
+                )
                 if q not in self._asked_questions:
                     return q
 
-        # 3. Root-based graph questions (last resort)
+        # 3. Root-specific walks — concrete graph traversals (last resort)
         if roots:
             root = roots[0]
             for t in [
-                f"What MAQASID categories appear in verses containing root {root}?",
-                f"What ILTIFAT shifts occur in verses where {root} appears?",
-                f"What adjacent roots appear most with {root} in the TMQ graph?",
+                f"Walk MAQASID edges from root {root} — state which categories appear and their frequency.",
+                f"Walk ILTIFAT edges in verses containing root {root} — state the person-shift pattern.",
+                f"Walk NARRATIVE edges from root {root} — state which story contexts it appears in.",
             ]:
                 if t not in self._asked_questions:
                     return t
