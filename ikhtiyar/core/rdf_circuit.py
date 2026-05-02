@@ -169,14 +169,7 @@ class RDFCircuit:
         """
         from core.vtransistor import PropagationResult
 
-        # Normalize BW input transparently
-        arabic_roots = []
-        for r in roots:
-            if r and not any(ord(c) > 0x05FF for c in r):
-                arabic_roots.append(bw_to_arabic(r))
-            else:
-                arabic_roots.append(r)
-        arabic_roots = [r for r in arabic_roots if r]
+        arabic_roots = [r for r in roots if r]
 
         _empty = PropagationResult(
             activated_frames={}, activated_roots={},

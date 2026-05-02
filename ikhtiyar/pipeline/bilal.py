@@ -38,10 +38,12 @@ if _LHWLQIB not in sys.path:
 
 logger = logging.getLogger(__name__)
 
+# QS.ttl root namespace (Arabic-script URIs)
+_QS_ROOT_NS = "http://quran.data/root/"
+
 # ── Archetypal Root Definitions ─────────────────────────────────────
-# These 13 roots carry full semantic definitions that override RLHF bias.
-# They serve as anchors in the expanded embedding space.
-ARCHETYPAL_ROOTS = {
+# Keys are Arabic script. Buckwalter source retained as comment only.
+_ARCHETYPAL_ROOTS_BW = {
     "wjb": {
         "keywords": "Necessary Being Source Existence Allah God Absolute Origin Wajib",
         "definition": "The Necessary Being (Wajib al-Wujud). The uncaused cause upon which all reality is contingent."
@@ -100,6 +102,12 @@ ARCHETYPAL_ROOTS = {
     },
 }
 
+# Convert to Arabic-script keys at module load — all runtime lookups use Arabic
+ARCHETYPAL_ROOTS = {
+    bw_to_arabic(bw): data
+    for bw, data in _ARCHETYPAL_ROOTS_BW.items()
+}
+
 # ── Chunk Splitting ─────────────────────────────────────────────────
 CLAUSE_SPLIT = re.compile(
     r'[,;:]\s*'
@@ -145,7 +153,7 @@ class Perception:
 
     @property
     def roots(self) -> List[str]:
-        """Unique roots detected, ordered by score (Buckwalter)."""
+        """Unique roots detected, ordered by score (Arabic script)."""
         seen = {}
         for s in self.signals:
             if s.root not in seen or s.score > seen[s.root]:
@@ -154,8 +162,8 @@ class Perception:
 
     @property
     def roots_arabic(self) -> List[str]:
-        """Unique roots detected, ordered by score (Arabic script)."""
-        return [bw_to_arabic(r) for r in self.roots]
+        """Alias for roots — Arabic script (kept for compatibility)."""
+        return self.roots
 
     @property
     def root_scores(self) -> Dict[str, float]:
@@ -172,14 +180,11 @@ class Perception:
         for r in self.roots[:5]:
             score = self.root_scores[r]
             sources = [s.source_chunk for s in self.signals if s.root == r]
-            lines.append(f"  {bw_root_display(r)} ({score:.2f}) <- {', '.join(sources[:2])}")
+            lines.append(f"  {r} ({score:.2f}) <- {', '.join(sources[:2])}")
         if self.cooccurrences:
             lines.append(f"  Co-occurrences: {len(self.cooccurrences)} root pairs found in Quran")
             for co in self.cooccurrences[:3]:
-                lines.append(
-                    f"    {bw_to_arabic(co.root_a)}+{bw_to_arabic(co.root_b)}"
-                    f" ({co.root_a}+{co.root_b}) in {co.count} verses"
-                )
+                lines.append(f"    {co.root_a}+{co.root_b} in {co.count} verses")
         return "\n".join(lines)
 
 
@@ -196,9 +201,9 @@ class Bilal:
 
     def __init__(self):
         self.model = None
-        self.concept_map: Dict[str, str] = {}       # english -> buckwalter
-        self.root_corpus: Dict[str, str] = {}        # buckwalter -> aggregated keywords
-        self.root_definitions: Dict[str, str] = {}   # buckwalter -> definition
+        self.concept_map: Dict[str, str] = {}       # english -> arabic root
+        self.root_corpus: Dict[str, str] = {}        # arabic root -> aggregated keywords
+        self.root_definitions: Dict[str, str] = {}   # arabic root -> definition
         self.root_keys: List[str] = []
         self.root_embeddings = None                   # numpy matrix
         self.graph = None                             # rdflib Graph (injected)
@@ -224,7 +229,11 @@ class Bilal:
                                become the primary embedding corpus. If None, falls back
                                to English keyword corpus.
         """
-        self.concept_map = concept_map
+        # Convert concept_map values from BW to Arabic at load time
+        self.concept_map = {
+            eng: (bw_to_arabic(bw) if bw and not any(ord(c) > 0x05FF for c in bw) else bw)
+            for eng, bw in concept_map.items()
+        }
         self.graph = graph
         self._build_root_corpus(constitution_path)
         self._build_embeddings()
@@ -288,30 +297,29 @@ class Bilal:
         self.root_corpus = {}
 
         if arabic_texts:
-            # Arabic-primary: join sample texts. Buckwalter key, Arabic value.
+            # Arabic-primary: constitution roots are already arabic-keyed (from active_command_set)
+            # Convert BW keys to Arabic if needed (constitution may still use BW keys)
             for root, texts in arabic_texts.items():
-                self.root_corpus[root] = " ".join(texts[:5])  # cap at 5 samples
-            # Keep English definitions for display only — not in embedding corpus
-            for buckwalter, data in ARCHETYPAL_ROOTS.items():
-                self.root_definitions[buckwalter] = data["definition"]
+                arabic_root = bw_to_arabic(root) if root and not any(ord(c) > 0x05FF for c in root) else root
+                self.root_corpus[arabic_root] = " ".join(texts[:5])
+            for arabic_root, data in ARCHETYPAL_ROOTS.items():
+                self.root_definitions[arabic_root] = data["definition"]
         else:
-            # English fallback — original behavior
             logger.warning("Bilal: no Arabic constitution — falling back to English keywords")
             root_words: Dict[str, List[str]] = defaultdict(list)
-            for english, buckwalter in self.concept_map.items():
-                root_words[buckwalter].append(english)
-            for buckwalter, data in ARCHETYPAL_ROOTS.items():
-                root_words[buckwalter].extend(data["keywords"].split())
-                self.root_definitions[buckwalter] = data["definition"]
-            for buckwalter, words in root_words.items():
+            for english, arabic_root in self.concept_map.items():
+                root_words[arabic_root].append(english)
+            for arabic_root, data in ARCHETYPAL_ROOTS.items():
+                root_words[arabic_root].extend(data["keywords"].split())
+                self.root_definitions[arabic_root] = data["definition"]
+            for arabic_root, words in root_words.items():
                 unique = list(dict.fromkeys(w.lower() for w in words))
-                self.root_corpus[buckwalter] = " ".join(unique)
+                self.root_corpus[arabic_root] = " ".join(unique)
 
-        # Also supplement from concept_map: any English term whose root is NOT
-        # already in the corpus from Arabic (i.e. roots not in the constitution)
-        for english, buckwalter in self.concept_map.items():
-            if buckwalter not in self.root_corpus:
-                self.root_corpus[buckwalter] = english
+        # Supplement from concept_map: roots not already in corpus
+        for english, arabic_root in self.concept_map.items():
+            if arabic_root not in self.root_corpus:
+                self.root_corpus[arabic_root] = english
 
         self.root_keys = list(self.root_corpus.keys())
         logger.info(f"Bilal root corpus: {len(self.root_keys)} unique roots")
@@ -606,26 +614,40 @@ class Bilal:
 
     # ── Graph Discovery ─────────────────────────────────────────────
 
-    def _get_verse_set(self, root_buckwalter: str) -> FrozenSet[str]:
+    def _get_verse_set(self, arabic_root: str) -> FrozenSet[str]:
         """
         Get all verse prefixes (s{X}v{Y}) where this root appears.
-        Cached because the ontology is immutable.
+        Queries QS.ttl (ConjunctiveGraph) via Arabic-script root URI.
+        Cached because the graph is immutable.
         """
-        if root_buckwalter in self._verse_cache:
-            return self._verse_cache[root_buckwalter]
+        if arabic_root in self._verse_cache:
+            return self._verse_cache[arabic_root]
 
         if self.graph is None:
             return frozenset()
 
-        root_uri = ROOT[root_buckwalter]
         verses = set()
-        for s, p, o in self.graph.triples((None, QURAN.hasRoot, root_uri)):
-            match = VERSE_PREFIX_RE.search(str(s))
-            if match:
-                verses.add(match.group(1))
+        root_uri_str = f"{_QS_ROOT_NS}{arabic_root}"
+        try:
+            from rdflib import URIRef
+            root_uri = URIRef(root_uri_str)
+            # QS.ttl: named graphs are ayah:s:v — enumerate contexts where root appears
+            for ctx in self.graph.contexts():
+                ctx_str = str(ctx.identifier)
+                if not ctx_str.startswith("http://quran.data/ayah/"):
+                    continue
+                ref = ctx_str[len("http://quran.data/ayah/"):]  # "s:v"
+                parts = ref.split(":")
+                if len(parts) == 2:
+                    verse_prefix = f"s{parts[0]}v{parts[1]}"
+                    # Check if root has any triple in this context
+                    if any(True for _ in ctx.triples((root_uri, None, None))):
+                        verses.add(verse_prefix)
+        except Exception as e:
+            logger.debug(f"_get_verse_set failed for {arabic_root}: {e}")
 
         result = frozenset(verses)
-        self._verse_cache[root_buckwalter] = result
+        self._verse_cache[arabic_root] = result
         return result
 
     def _discover_cooccurrences(self, roots: List[str]) -> List[CoOccurrence]:
