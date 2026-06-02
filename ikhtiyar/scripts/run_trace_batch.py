@@ -38,6 +38,11 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--questions", type=Path, help="One question per line UTF-8")
     p.add_argument("--limit", type=int, default=0, help="Max questions (0=all)")
+    p.add_argument(
+        "--reuse-session",
+        action="store_true",
+        help="Reuse a single orchestrator/session for all questions (default: new session per question)",
+    )
     args = p.parse_args()
 
     if args.questions and args.questions.exists():
@@ -54,9 +59,11 @@ def main() -> int:
 
     from orchestrator.shahid import ShahidOrchestrator  # noqa: WPS433
 
-    orch = ShahidOrchestrator()
+    orch = ShahidOrchestrator() if args.reuse_session else None
     ok = 0
     for q in lines:
+        if orch is None:
+            orch = ShahidOrchestrator()
         out = orch.run_cycle(q)
         delivered = bool(out.get("delivered"))
         circuit = next((s for s in out.get("steps", []) if s[0] == "circuit"), None)
@@ -66,6 +73,8 @@ def main() -> int:
         )
         if delivered:
             ok += 1
+        if not args.reuse_session:
+            orch = None
 
     _safe_print(
         f"Done: {ok}/{len(lines)} delivered. Traces under ikhtiyar/sessions/traces/"
