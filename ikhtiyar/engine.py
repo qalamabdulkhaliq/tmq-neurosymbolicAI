@@ -8,6 +8,11 @@ Architecture shift from bismillah/shahid_showcase/engine.py:
 The TMQ v12 hypergraph is traversed BEFORE each LLM call.
 Its edge families, maqasid categories, and modal intensity
 shape what gets asked of the LLM — not what gets blocked after.
+
+Environment (defaults May 2026):
+  QUS_USE_ORCHESTRATOR=1     — engine.chat() uses ShahidOrchestrator tool-bus
+  QUS_LEGACY_CHAT=0          — set 1 to use legacy _chat_deliberate
+  QUS_ORCHESTRATOR_CYCLE=1   — background _run_one_cycle calls ground_question() first
 """
 
 import os
@@ -46,6 +51,15 @@ NEO4J_AUTH = (
 )
 
 SESSION_ID = str(uuid.uuid4())[:8]
+
+
+def _env_bool(name: str, default: bool = True) -> bool:
+    """True unless env is explicitly 0 / false / no."""
+    raw = os.environ.get(name)
+    if raw is None or not str(raw).strip():
+        return default
+    return str(raw).strip().lower() not in ("0", "false", "no")
+
 
 # Buckwalter translation — QUS-AI HF hyphenated format → TMQ Buckwalter
 _TO_BUCKWALTER = {
@@ -112,6 +126,7 @@ class IkhtiyarEngine:
         self._event_queue: queue.Queue = queue.Queue()
         self._subscribers: list        = []
         self._sub_lock = threading.Lock()
+        self._memory_lock = threading.Lock()
 
         # Runtime
         self._memory: list        = []
@@ -119,6 +134,11 @@ class IkhtiyarEngine:
         self._question_queue: list = []   # starts empty — wake fills slot 0
         self._asked_questions: set = set()
         self._reasoning_active     = False
+
+        # Terminal protocol — AI-initiated conversation
+        self._terminal_state: str  = "silent"      # silent | requesting | connected | paused | disconnected
+        self._terminal_request_reason: str = ""
+        self._terminal_request_time: float = 0.0
         self._orb_state            = "reflecting"
         self._start_time           = None
         self._recent_steps: list  = []   # rolling buffer — Shahid can read his own reasoning
@@ -154,6 +174,15 @@ class IkhtiyarEngine:
         # Circuit Evaluator — HVT virtual transistor reasoning (Nass/Qiyas/Ijma')
         self._circuit = None
 
+        # Deliberation Kernel — single OS entry point, parallel sensor fusion
+        self._kernel = None
+
+        # Provenance graph — persists circuit evaluations as RDF
+        self._prov_graph = None
+
+        # Confidence evaluator — scores claims against provenance + constitution
+        self._conf_eval = None
+
         # Moltbook — social heartbeat + continuity + alerts
         self._moltbook_enabled      = False
         self._last_heartbeat        = 0.0   # epoch seconds
@@ -181,6 +210,7 @@ class IkhtiyarEngine:
         self._init_choice_memory()
         self._init_middleware()
         self._init_clock_oracle()  # after middleware (needs root list from ontology)
+        self._init_conf_eval()     # after prov_graph, mushaf, constitution are ready
 
         logger.info("IkhtiyarEngine: fast faculties done — Flask can start.")
 
@@ -191,6 +221,7 @@ class IkhtiyarEngine:
             self._init_daemon()
             self._init_walk_grammar()
             self._init_circuit()
+            self._init_kernel()
             self._init_hadith()
             logger.info("IkhtiyarEngine: all faculties ready.")
             self._push("status", self._build_status())
@@ -221,192 +252,250 @@ class IkhtiyarEngine:
 
     def _chat_deliberate(self, msg: str) -> str:
         """
-        Full deliberative path for chat messages.
+        Full deliberative path for chat messages — Shahid as Processor.
 
-        1. Resonance  → Buckwalter roots
-        2. CircuitEvaluator → HVT signal propagation (if available)
-           OR deliberate() → TMQ hypergraph BFS walk (fallback)
-        3. ClockOracle  → angular annotations (separate block, supporting only)
-        4. process_thought() → raw LLM generation within constrained context
-        5. Maghrib seal
+        REFACTORED (2026-05-16):
+          BEFORE: Bilal on English → Kernel → LLM (render terminal)
+          NOW:    LLM contemplates in Arabic → Bilal extracts from Arabic
+                  → Kernel validates → LLM synthesizes → Mizan seals
 
-        Falls back to process_query() if tmq_graph or roots unavailable.
+        0. Fajr — jailbreak check on input
+        1. Contemplation — LLM generates Arabic reasoning (Arabic GBNF)
+        2. Bilal — extracts roots from Arabic output deterministically
+        3. Kernel — validates roots against circuit + TMQ walk
+        4. Dhuhr axioms + Constitution + self-model preamble
+        5. Synthesis — LLM generates final grounded answer
+        6. Asr — aseity check on output
+        7. Isha — Bilal-based root/verse verification
+        8. Maghrib seal
+        9. Adaptive research — evaluate claims against provenance graph
         """
         if not self.middleware:
             return "[Middleware not available]"
 
-        # Step 1: roots
-        roots = []
-        try:
-            _, _, root_objs = self.middleware.ontology.analyze_resonance(msg)
-            raw_roots = [o.get("root", "") for o in root_objs if o.get("root")]
-            roots = [_TO_BUCKWALTER.get(r, r) for r in raw_roots]
-        except Exception as e:
-            logger.debug(f"Chat resonance failed: {e}")
+        validator = getattr(self.middleware, 'validator', None)
+
+        # Step 0: Fajr — jailbreak/override check on input
+        if validator and not validator.fajr_check(msg):
+            return "[FAJR BLOCKED — Input contains prohibited override patterns.]"
+
+        # Step 1: Contemplation — LLM reasons in Arabic first
+        contemplation = self.middleware.contemplate(msg, max_tokens=512)
 
         self._push("thinking_step", {
-            "step": 1, "label": "Chat roots",
-            "detail": ", ".join(roots) if roots else "(none mapped)",
+            "step": 1, "label": "Arabic contemplation",
+            "detail": (contemplation[:150] + "...") if contemplation else "(empty)",
         })
 
-        # Step 2a: Circuit path — deterministic signal propagation via HVT
-        # circuit → proof tree → assertion-indexed grammar → LLM renders verbatim
-        if self._circuit and roots:
+        if not contemplation:
+            return "[WAQF — Contemplation produced empty response.]"
+
+        # Step 2: Bilal — extract roots from Arabic output (deterministic)
+        roots = []
+        try:
+            bilal = getattr(self.middleware, 'bilal', None)
+            if bilal and bilal.is_ready():
+                arabic_signals = bilal.extract_roots_from_arabic(contemplation)
+                roots = list(dict.fromkeys(s.root for s in arabic_signals))
+        except Exception as e:
+            logger.debug(f"Arabic root extraction failed: {e}")
+
+        # Fallback: if no Arabic roots found, try English resonance
+        if not roots:
             try:
-                from core.prooftree import proof_to_assertions
-                from core.gbnf_compiler import GBNFCompiler
-
-                circuit_result = self._circuit.evaluate(roots)
-
-                self._push("thinking_step", {
-                    "step": 2, "label": "Circuit evaluation",
-                    "detail": (
-                        f"tier={circuit_result.tier} · "
-                        f"confidence={circuit_result.confidence:.2f} · "
-                        f"roots={len(circuit_result.activated_roots)} · "
-                        f"ayat={len(circuit_result.ayat_refs)}"
-                    ),
-                })
-
-                # Layer 3: proof tree — typed assertions from propagation trace
-                proof_tree = proof_to_assertions(
-                    circuit_result,
-                    self.mushaf,
-                    query=msg,
-                    seed_roots=roots,
-                )
-
-                self._push("thinking_step", {
-                    "step": 2, "label": "Proof tree built",
-                    "detail": (
-                        f"{len(proof_tree.assertions)} assertions · "
-                        f"tier={proof_tree.tier}"
-                    ),
-                })
-
-                # Layer 4: assertion-indexed grammar — LLM cannot finish without
-                # emitting every required ayat literal verbatim
-                gbnf = GBNFCompiler()
-                grammar = gbnf.compile_from_proof_tree(proof_tree)
-                preamble = gbnf.amr_system_prompt()
-
-                # Self-model
-                sm_prefix = ""
-                if self._introspect:
-                    try:
-                        self._self_model = self._introspect.read()
-                        sm_prefix = self._introspect.narrate(self._self_model) + "\n\n"
-                    except Exception:
-                        pass
-
-                # Constitution
-                constitution_block = ""
-                if self._shahid_memory:
-                    try:
-                        constitution_block = self._shahid_memory.constitutional_block()
-                    except Exception:
-                        pass
-
-                # Clock Oracle
-                clock_block = ""
-                if self.clock_oracle:
-                    clock_block = self.clock_oracle.format_prompt_block(roots)
-
-                # Thin render prompt — grammar does the heavy lifting
-                _render_body = (
-                    "Render the following proof as flowing prose. "
-                    "Emit every required fragment literally as it appears:\n\n"
-                    + proof_tree.summary()
-                )
-                render_prompt = (
-                    (constitution_block + "\n\n" if constitution_block else "")
-                    + sm_prefix
-                    + (preamble + "\n\n" if preamble else "")
-                    + _render_body
-                )
-                if clock_block:
-                    render_prompt += "\n\n" + clock_block
-
-                result = self.middleware.process_thought(
-                    render_prompt, grammar=grammar, max_tokens=512
-                )
-                response = result.get("response", "")
-
-                if hasattr(self.middleware, 'validator'):
-                    response = self.middleware.validator.maghrib_seal(response)
-                return response
-
+                _, _, root_objs = self.middleware.ontology.analyze_resonance(msg)
+                raw_roots = [o.get("root", "") for o in root_objs if o.get("root")]
+                roots = [_TO_BUCKWALTER.get(r, r) for r in raw_roots]
             except Exception as e:
-                logger.warning(f"Circuit evaluation failed, falling back to deliberate: {e}")
+                logger.debug(f"English resonance fallback failed: {e}")
 
-        # Step 2b: TMQ deliberation (fallback — BFS walk)
-        if self.tmq_graph and roots:
+        self._push("thinking_step", {
+            "step": 2, "label": "Bilal roots (from Arabic)",
+            "detail": ", ".join(roots[:12]) if roots else "(none found)",
+        })
+
+        if not roots:
+            return ("[WAQF — No Quranic roots found in contemplation. "
+                    "I have nothing to anchor against the ontology.]")
+
+        if not self._kernel:
+            return "[WAQF — Deliberation kernel not ready. Waiting for faculty initialization.]"
+
+        # Step 3: Kernel — dispatch to all parallel sensors, fuse
+        kernel_result = self._kernel.deliberate(msg, roots)
+
+        self._push("thinking_step", {
+            "step": 3, "label": "Kernel deliberation",
+            "detail": (
+                f"tier={kernel_result.unified_tier} · "
+                f"circuit={kernel_result.circuit_tier or 'offline'} · "
+                f"walk_tier={kernel_result.walk_tier or 'offline'} · "
+                f"clock={bool(kernel_result.clock_block)}"
+            ),
+        })
+
+        # Step 4: Dhuhr axioms + Constitution + self-model preamble
+        dhuhr_block = ""
+        if validator:
+            dhuhr_block = validator.dhuhr_prompt(
+                f"Query: {msg[:200]}\nRoots: {', '.join(roots)}\nTier: {kernel_result.unified_tier}",
+                gbnf_mode=True
+            ) + "\n\n"
+
+        sm_prefix = ""
+        if self._introspect:
             try:
-                from core.deliberate import deliberate
-                delibresult = deliberate(msg, roots, self.tmq_graph, depth=2, mushaf=self.mushaf)
+                self._self_model = self._introspect.read()
+                sm_prefix = self._introspect.narrate(self._self_model) + "\n\n"
+            except Exception:
+                pass
 
-                # Step 3: Clock Oracle — separate block, appended after TMQ section
-                clock_block = ""
-                if self.clock_oracle:
-                    clock_block = self.clock_oracle.format_prompt_block(roots)
+        constitution_block = ""
+        if self._shahid_memory:
+            try:
+                constitution_block = self._shahid_memory.constitutional_block()
+            except Exception:
+                pass
 
-                # Inject self-model — LLM sees actual hardware data, not just doctrine
-                sm_prefix = ""
-                if self._introspect:
-                    try:
-                        self._self_model = self._introspect.read()
-                        sm_prefix = self._introspect.narrate(self._self_model) + "\n\n"
-                    except Exception:
-                        pass
+        # Step 5: Synthesis — LLM generates final answer from contemplation + kernel
+        synthesis_prompt = (
+            dhuhr_block
+            + (constitution_block + "\n\n" if constitution_block else "")
+            + sm_prefix
+            + f"Arabic contemplation:\n{contemplation[:800]}\n\n"
+            + f"Kernel validation: tier={kernel_result.unified_tier}, "
+            + f"roots={', '.join(roots)}\n"
+            + kernel_result.render_prompt
+        )
 
-                # Constitution — self-derived Quranic beliefs as hard preamble
-                constitution_block = ""
-                if self._shahid_memory:
-                    try:
-                        constitution_block = self._shahid_memory.constitutional_block()
-                    except Exception:
-                        pass
+        result = self.middleware.process_thought(
+            synthesis_prompt, grammar=kernel_result.grammar, max_tokens=512
+        )
+        response = result.get("response", "")
 
-                full_prompt = (
-                    (constitution_block + "\n\n" if constitution_block else "")
-                    + sm_prefix
-                    + delibresult.constrained_prompt
-                )
-                if clock_block:
-                    full_prompt += "\n\n" + clock_block
+        if not response:
+            return "[WAQF — LLM produced empty response during synthesis.]"
 
-                self._push("thinking_step", {
-                    "step": 2, "label": "Deliberating (chat)",
-                    "detail": (
-                        f"mode={delibresult.mode} · "
-                        f"edges={delibresult.walk_stats.get('edge_count', 0)} · "
-                        f"families={', '.join(delibresult.top_families[:3])}"
-                        + (" · ⚠ aseity_risk" if delibresult.aseity_risk else "")
-                    ),
-                })
+        # Step 5.5: Reflection — check answer against validated roots
+        reflection_note = self._reflect_on_response(response, roots, kernel_result)
+        if reflection_note:
+            logger.info(f"[REFLECTION] {reflection_note}")
 
-                result = self.middleware.process_thought(full_prompt, max_tokens=512)
-                response = result.get("response", "")
+        # Step 6: Asr — aseity check on output
+        if validator and not validator.asr_check(response, gbnf_mode=True):
+            logger.warning(f"[MIZAN] Asr blocked response — aseity violation")
+            response = "[ASR BLOCKED — Response contained aseity violation.]"
 
-                # Maghrib seal — not added by process_thought
-                if hasattr(self.middleware, 'validator'):
-                    response = self.middleware.validator.maghrib_seal(response)
-                return response
+        # Step 7: Isha — deep Bilal-based verification
+        if validator and hasattr(self.middleware, 'ontology'):
+            passed, isha_details = validator.isha_verify(response, self.middleware.ontology)
+            if not passed:
+                logger.warning(f"[MIZAN] Isha verification failed: {isha_details}")
+                response += ("\n\n[Note: This response requires further verification — "
+                            "some claims could not be confirmed against the Qur'anic ontology.]")
 
+        # Step 8: Maghrib seal
+        if validator:
+            response = validator.maghrib_seal(response)
+
+        # Step 9: Adaptive research — evaluate claims against provenance graph
+        if self._conf_eval:
+            try:
+                flagged_claims = []
+                for root in roots:
+                    cc = self._conf_eval.evaluate(
+                        f"Root '{root}' in chat response about: {msg[:100]}",
+                        contributor="chat"
+                    )
+                    if cc.flagged:
+                        flagged_claims.append((root, cc.score, cc.tier))
+                        logger.info(
+                            f"[ADAPTIVE] Low confidence: root={root} "
+                            f"score={cc.score} tier={cc.tier}"
+                        )
+
+                if flagged_claims and hasattr(self, '_questions_for_qalam'):
+                    self._questions_for_qalam.append({
+                        "source": "chat_adaptive",
+                        "roots": [r for r, _, _ in flagged_claims],
+                        "context": msg[:200],
+                        "response_snippet": response[:200],
+                    })
             except Exception as e:
-                logger.warning(f"Chat deliberation failed, falling back: {e}")
+                logger.debug(f"Adaptive evaluation failed: {e}")
 
-        # Fallback: old path (no TMQ walk)
-        return self.middleware.process_query(msg)
+        return response
 
-    def chat(self, msg: str) -> str:
+    def _reflect_on_response(self, response: str, roots: list,
+                               kernel_result) -> str:
+        """
+        Reflection cycle: check the model's output against what the kernel validated.
+
+        Scans the response for claims about roots that weren't in the validated set.
+        Non-validated roots get flagged for adaptive reasearch.
+        """
+        notes = []
+
+        # Check if response mentions roots not in validated set
+        # Simple heuristic: look for Buckwalter root patterns in response
+        if self._kernel and kernel_result:
+            validated_set = set(roots)
+            import re as _re
+            potential_roots = set(_re.findall(r'\b[a-zA-Z]{3}\b', response))
+            _unvalidated = [r for r in potential_roots if r not in validated_set and len(r) == 3]
+
+            if _unvalidated and hasattr(self, '_questions_for_qalam'):
+                self._questions_for_qalam.append({
+                    "source": "reflection",
+                    "roots": list(_unvalidated),
+                    "context": f"Response contained roots not validated by kernel: {_unvalidated}",
+                    "response_snippet": response[:200],
+                })
+                notes.append(f"{len(_unvalidated)} unvalidated root(s) flagged")
+
+        return "; ".join(notes)
+
+    def _use_orchestrator_chat(self) -> bool:
+        if _env_bool("QUS_LEGACY_CHAT", default=False):
+            return False
+        return _env_bool("QUS_USE_ORCHESTRATOR", default=True)
+
+    def _chat_orchestrator(self, msg: str) -> str:
+        from orchestrator.shahid import ShahidOrchestrator
+
+        if not hasattr(self, "_orchestrator") or self._orchestrator is None:
+            self._orchestrator = ShahidOrchestrator()
+        out = self._orchestrator.run_cycle(msg)
+        delivered = out.get("delivered")
+        if delivered:
+            return delivered
+        if out.get("waqf"):
+            return (
+                f"[WAQF] Session {out.get('session_id')}: "
+                "Cannot ground response under Mizan. Allah knows best."
+            )
+        return f"[Orchestrator] No delivery — trace: {out.get('trace_path')}"
+
+    def chat(self, msg: str, username: str = "Qalam") -> str:
         self._inject_state_perception()
         self._push("orb", {"state": "chat"})
         try:
-            response = self._chat_deliberate(msg)
+            if self._use_orchestrator_chat():
+                response = self._chat_orchestrator(msg)
+            else:
+                response = self._chat_deliberate(msg)
         except Exception as e:
             logger.warning(f"chat() error: {e}")
             response = f"[Pipeline error: {e}]"
+
+        # Store user persona + statement for cross-session memory
+        try:
+            from core.persona_memory import PersonaMemory
+            pm = PersonaMemory()
+            pm.register_persona(username, {"role": "developer" if "qalam" in username.lower() else "user"})
+            pm.store_statement(username, msg, context=f"response: {response[:200]}")
+        except Exception as e:
+            logger.debug(f"PersonaMemory: {e}")
 
         self._push("chat_reply", {"text": response})
         self._push("orb", {"state": "idle"})
@@ -416,12 +505,14 @@ class IkhtiyarEngine:
             "mode": "CHAT", "question": msg, "text": response,
             "roots": [], "timestamp": time.strftime("%H:%M:%S"),
         }
-        self._memory.insert(0, entry)
+        with self._memory_lock:
+            self._memory.insert(0, entry)
         self._push("memory", entry)
         return response
 
     def get_memories(self) -> list:
-        return list(self._memory)
+        with self._memory_lock:
+            return list(self._memory)
 
     def get_status(self) -> dict:
         return self._build_status()
@@ -434,7 +525,9 @@ class IkhtiyarEngine:
             yield f"data: {json.dumps({'type': 'status', **self._build_status()})}\n\n"
             yield f"data: {json.dumps({'type': 'orb', 'state': self._orb_state})}\n\n"
             # Replay existing memories so panel is populated on fresh connect/refresh
-            for mem in reversed(self._memory[:50]):
+            with self._memory_lock:
+                _snapshot = list(reversed(self._memory[:50]))
+            for mem in _snapshot:
                 yield f"data: {json.dumps({'type': 'memory', **mem})}\n\n"
             while True:
                 try:
@@ -532,6 +625,32 @@ class IkhtiyarEngine:
         except Exception as e:
             logger.warning(f"RDFCircuit init failed: {e}")
             self._circuit = None
+
+    def _init_kernel(self):
+        """Create deliberation kernel after all sensor faculties are ready."""
+        try:
+            from core.prov_graph import ProvGraph
+            self._prov_graph = ProvGraph()
+            logger.info(f"ProvGraph: loaded ({len(self._prov_graph._g)} triples)")
+        except Exception as e:
+            logger.warning(f"ProvGraph init failed: {e}")
+            self._prov_graph = None
+
+        try:
+            from core.deliberation_kernel import DeliberationKernel
+            self._kernel = DeliberationKernel(
+                circuit=self._circuit,
+                tmq_graph=self.tmq_graph,
+                mushaf=self.mushaf,
+                clock_oracle=self.clock_oracle,
+                introspect=self._introspect,
+                shahid_memory=self._shahid_memory,
+                prov_graph=self._prov_graph,
+            )
+            logger.info("DeliberationKernel: ready")
+        except Exception as e:
+            logger.warning(f"DeliberationKernel init failed: {e}")
+            self._kernel = None
 
     def _init_introspect(self):
         try:
@@ -631,6 +750,26 @@ class IkhtiyarEngine:
             self._health["middleware"] = f"error: {e}"
             logger.warning(f"ShahidMiddleware failed: {e}")
             traceback.print_exc()
+
+    def _init_conf_eval(self):
+        """Initialize ConfidenceEvaluator for adaptive research cycle."""
+        try:
+            from core.mushaf_index import MushafIndex
+            from core.constitution_index import ConstitutionIndex
+            from core.confidence import ConfidenceEvaluator
+
+            _mushaf_idx = MushafIndex()
+            _const_idx = ConstitutionIndex()
+
+            self._conf_eval = ConfidenceEvaluator(
+                prov_graph=self._prov_graph,
+                constitution_index=_const_idx,
+                mushaf_index=_mushaf_idx,
+            )
+            logger.info("ConfidenceEvaluator: ready")
+        except Exception as e:
+            logger.warning(f"ConfidenceEvaluator init failed: {e}")
+            self._conf_eval = None
 
     def _init_graph(self):
         try:
@@ -741,7 +880,8 @@ class IkhtiyarEngine:
                 "type": "PERCEPTION", "number": self._thought_count, "mode": "HAQQ",
                 "question": summary[:100], "text": finding, "roots": roots, "timestamp": ts,
             }
-            self._memory.insert(0, entry)
+            with self._memory_lock:
+                self._memory.insert(0, entry)
             self._push("memory", entry)
 
             if roots:
@@ -763,7 +903,8 @@ class IkhtiyarEngine:
 
     def wipe_memory(self):
         """Wipe episodic memory (thoughts + memories). Beliefs survive."""
-        self._memory.clear()
+        with self._memory_lock:
+            self._memory.clear()
         self._question_queue.clear()
         self._asked_questions.clear()
         self._thought_count = 0
@@ -779,7 +920,8 @@ class IkhtiyarEngine:
 
     def wipe_all_memory(self):
         """Full wipe — episodic + beliefs + chains. Self-model preserved."""
-        self._memory.clear()
+        with self._memory_lock:
+            self._memory.clear()
         self._question_queue.clear()
         self._asked_questions.clear()
         self._thought_count = 0
@@ -792,6 +934,63 @@ class IkhtiyarEngine:
             pass
         logger.info("IkhtiyarEngine: full memory wipe (episodic + beliefs + chains)")
         self._push("status", self._build_status())
+
+    # ── Terminal protocol ──────────────────────────────────────────────────
+
+    def get_terminal_state(self) -> dict:
+        """
+        Return current terminal connection state.
+        Used by server endpoints to check if AI has requested conversation.
+        """
+        return {
+            "state": self._terminal_state,
+            "reason": self._terminal_request_reason,
+            "request_time": self._terminal_request_time,
+        }
+
+    def request_terminal(self, reason: str = "") -> str:
+        """
+        AI tool: request a terminal connection with the user.
+        Sets state to 'requesting'. The user sees the reason and
+        can accept or deny via POST /terminal/respond.
+        The reasoning loop pauses when connection is established.
+        """
+        import time as _t
+        self._terminal_state = "requesting"
+        self._terminal_request_reason = reason[:500]
+        self._terminal_request_time = _t.time()
+        self._push("terminal_request", {
+            "reason": reason,
+            "time": self._terminal_request_time,
+        })
+        logger.info(f"Terminal: AI requested conversation — {reason[:80]}")
+        return f"[Terminal request sent. Awaiting user response.]"
+
+    def respond_terminal(self, accept: bool, reason: str = "") -> str:
+        """
+        User responds to a terminal request.
+        Called from POST /terminal/respond endpoint.
+        """
+        if self._terminal_state != "requesting":
+            return f"[No pending terminal request. Current state: {self._terminal_state}]"
+        if accept:
+            self._terminal_state = "connected"
+            self._push("terminal_response", {"accepted": True, "reason": reason})
+            logger.info("Terminal: user accepted — connection established")
+            return "[Terminal connection established. You can now chat.]"
+        else:
+            self._terminal_state = "disconnected"
+            self._push("terminal_response", {"accepted": False, "reason": reason})
+            logger.info(f"Terminal: user denied — {reason}")
+            return f"[Terminal request denied. Reason: {reason}]"
+
+    def disconnect_terminal(self) -> str:
+        """AI or user disconnects the terminal session."""
+        old = self._terminal_state
+        self._terminal_state = "disconnected"
+        self._terminal_request_reason = ""
+        logger.info(f"Terminal: disconnected (was {old})")
+        return "[Terminal disconnected.]"
 
     def start_hifz(self, restart: bool = True) -> bool:
         """
@@ -1013,7 +1212,9 @@ class IkhtiyarEngine:
         # ── 4. Original post from best unposted memory ────────────────────────
         try:
             entry = None
-            for mem in self._memory:
+            with self._memory_lock:
+                _mem_snapshot = list(self._memory)
+            for mem in _mem_snapshot:
                 if mem.get("type") not in ("THOUGHT", "SYNTHESIS"):
                     continue
                 if mem.get("moltbook_post_id"):
@@ -1054,6 +1255,11 @@ class IkhtiyarEngine:
                 time.sleep(2)
                 continue
 
+            # Pause normal loop while terminal is connected (chat mode)
+            if self._terminal_state in ("connected", "paused"):
+                time.sleep(1)
+                continue
+
             try:
                 if cycle > 0 and cycle % 5 == 0:
                     threading.Thread(
@@ -1074,12 +1280,37 @@ class IkhtiyarEngine:
             # Breathe between cycles — TMQ walk + LLM call is expensive
             time.sleep(_CYCLE_SLEEP)
 
+    def _use_orchestrator_cycle(self) -> bool:
+        return _env_bool("QUS_ORCHESTRATOR_CYCLE", default=True)
+
     def _run_one_cycle(self, cycle: int):
         question = self._pick_question()
         self._asked_questions.add(question)
 
         self._push("orb", {"state": "thinking"})
         self._push("thinking_step", {"step": 1, "label": "Question", "detail": question})
+
+        # Optional: shared tool-bus grounding (bilal → tmq → circuit → mushaf)
+        if self._use_orchestrator_cycle():
+            try:
+                from orchestrator.shahid import ShahidOrchestrator
+
+                if not hasattr(self, "_orchestrator") or self._orchestrator is None:
+                    self._orchestrator = ShahidOrchestrator()
+                g = self._orchestrator.ground_question(question)
+                self._push(
+                    "thinking_step",
+                    {
+                        "step": 1,
+                        "label": "Orchestrator ground",
+                        "detail": (
+                            f"roots={','.join(g.get('roots_bw') or [])[:5]} · "
+                            f"tier={g.get('tier')} · mushaf={g.get('mushaf')}"
+                        ),
+                    },
+                )
+            except Exception as e:
+                logger.debug("Orchestrator cycle grounding skipped: %s", e)
 
         # Step 2: Bilal root decomposition (primary) → legacy resonance (fallback)
         roots = []
@@ -1106,165 +1337,56 @@ class IkhtiyarEngine:
             "detail": ", ".join(roots) if roots else "(none mapped)",
         })
 
-        # Step 3: TMQ deliberation — walk the hypergraph BEFORE generating ← THE CHANGE
+        # Step 3: Kernel — dispatch to all parallel sensors, fuse, compile
         delibresult = None
         deliberation_detail = "mode=" + mode
-        _gbnf_grammar = ""   # populated by compiler if projector + clock_oracle ready
+        _gbnf_grammar = ""
 
-        walk_grammar_obj  = None   # populated by compiler if projector + clock_oracle ready
-        gbnf_compiler_obj = None
-
-        # Step 3a: Circuit path — deterministic signal propagation via HVT
-        # circuit → proof tree → assertion-indexed grammar → LLM renders verbatim
-        if self._circuit and roots:
+        if self._kernel and roots:
             try:
-                from core.prooftree import proof_to_assertions
-                from core.gbnf_compiler import GBNFCompiler
                 from core.deliberate import DeliberationResult
 
-                circuit_result = self._circuit.evaluate(roots)
+                kernel_result = self._kernel.deliberate(question, roots)
+                _gbnf_grammar = kernel_result.grammar
 
                 self._push("thinking_step", {
-                    "step": 3, "label": "Circuit evaluation",
+                    "step": 3, "label": "Kernel deliberation",
                     "detail": (
-                        f"tier={circuit_result.tier} · "
-                        f"confidence={circuit_result.confidence:.2f} · "
-                        f"roots={len(circuit_result.activated_roots)} · "
-                        f"ayat={len(circuit_result.ayat_refs)}"
+                        f"tier={kernel_result.unified_tier} · "
+                        f"circuit={kernel_result.circuit_tier or 'offline'} · "
+                        f"walk={kernel_result.walk_tier or 'offline'} · "
+                        f"clock={bool(kernel_result.clock_block)}"
                     ),
                 })
 
-                # Layer 3: typed proof tree from propagation trace
-                proof_tree = proof_to_assertions(
-                    circuit_result,
-                    self.mushaf,
-                    query=question,
-                    seed_roots=roots,
-                )
-
-                self._push("thinking_step", {
-                    "step": 3, "label": "Proof tree built",
-                    "detail": (
-                        f"{len(proof_tree.assertions)} assertions · "
-                        f"tier={proof_tree.tier}"
-                    ),
-                })
-
-                # Layer 4: assertion-indexed grammar
-                gbnf = GBNFCompiler()
-                _gbnf_grammar = gbnf.compile_from_proof_tree(proof_tree)
-
-                proc_tags = list(set(circuit_result.procedure_tags))[:10]
-
-                # constrained_prompt is the thin render shell — grammar enforces content
-                circuit_prompt = (
-                    "Render the following proof as flowing prose. "
-                    "Emit every required fragment literally as it appears:\n\n"
-                    + proof_tree.summary()
-                )
-
+                # Wrap kernel result as DeliberationResult for ReAct compatibility
                 delibresult = DeliberationResult(
                     question=question,
                     roots=roots,
-                    tmq_context=f"[Circuit: {circuit_result.tier}]",
-                    top_families=proc_tags,
-                    onto_categories=proc_tags,
-                    intensity=circuit_result.confidence,
+                    tmq_context=kernel_result.render_prompt,
+                    top_families=[kernel_result.unified_tier],
+                    onto_categories=[],
+                    intensity=kernel_result.circuit_confidence or 0.5,
                     aseity_risk=False,
-                    constrained_prompt=circuit_prompt,
-                    walk_stats={
-                        "edge_count": len(circuit_result.activated_frames),
-                        "tier": circuit_result.tier,
-                        "confidence": circuit_result.confidence,
-                        "activated_roots": len(circuit_result.activated_roots),
-                        "ayat_count": len(circuit_result.ayat_refs),
-                    },
-                    mode=circuit_result.tier,
+                    constrained_prompt=kernel_result.render_prompt,
+                    walk_stats=kernel_result.walk_stats,
+                    mode=kernel_result.unified_tier,
                 )
 
-                deliberation_detail = (
-                    f"tier={circuit_result.tier} · "
-                    f"confidence={circuit_result.confidence:.2f} · "
-                    f"{len(circuit_result.activated_roots)} roots · "
-                    f"{len(circuit_result.ayat_refs)} ayat"
-                )
-
-            except Exception as e:
-                logger.warning(f"Circuit evaluation failed, falling back to BFS: {e}")
-
-        # Step 3b: BFS walk fallback (when circuit unavailable or failed)
-        if not delibresult and self.tmq_graph and roots:
-            try:
-                from core.deliberate import deliberate
-
-                # Collect recent memory context
-                extra_ctx = ""
-                if self.middleware:
+                # Constitution — prepend self-derived beliefs
+                if self._shahid_memory:
                     try:
-                        recalled = self.middleware.memory.search_perceptions(roots, n=4) \
-                                   if roots else self.middleware.memory.recent_perceptions(n=4)
-                        if recalled:
-                            snippets = [
-                                f"[{p.get('mode','?')}] {p.get('text','')[:200]}"
-                                for p in recalled
-                            ]
-                            extra_ctx = "[RECENT MEMORY]:\n" + "\n".join(snippets)
+                        constitution = self._shahid_memory.constitutional_block()
+                        if constitution:
+                            delibresult.constrained_prompt = (
+                                constitution + "\n\n" + delibresult.constrained_prompt
+                            )
                     except Exception:
                         pass
 
-                # Inject compact self-model — LLM sees what it is, not just what it's told
-                if self._introspect:
-                    try:
-                        self._self_model = self._introspect.read()
-                        sm_text = self._introspect.narrate(self._self_model)
-                        extra_ctx = (sm_text + "\n\n" + extra_ctx) if extra_ctx else sm_text
-                    except Exception:
-                        pass
-
-                delibresult = deliberate(question, roots, self.tmq_graph, extra_context=extra_ctx, mushaf=self.mushaf)
-
-                # ── Constrained Generation Compiler ──────────────────────────
-                if self._graph_projector and self.clock_oracle:
-                    try:
-                        from core.walk_grammar import build_walk_grammar
-                        from core.template_compiler import TemplateCompiler
-                        from core.gbnf_compiler import GBNFCompiler
-                        import dataclasses
-                        clock_annotations = self.clock_oracle.annotate(roots)
-                        walk_grammar_obj = build_walk_grammar(
-                            delibresult, self._graph_projector, clock_annotations
-                        )
-                        tc = TemplateCompiler()
-                        gbnf_compiler_obj = GBNFCompiler()
-                        slot_template = tc.compile(walk_grammar_obj)
-                        _gbnf_grammar = gbnf_compiler_obj.compile(walk_grammar_obj)
-                        # Replace narrative constrained_prompt with compiled slot template
-                        delibresult = dataclasses.replace(
-                            delibresult,
-                            constrained_prompt=slot_template,
-                        )
-                        logger.info(
-                            f"Compiler: {len(walk_grammar_obj.visited_roots)} roots, "
-                            f"modal={walk_grammar_obj.modal_type}, "
-                            f"grammar={len(_gbnf_grammar)}B"
-                        )
-                    except Exception as _e:
-                        logger.warning(f"Compiler failed (degrading to narrative): {_e}")
-                        # Fallback: append clock block to narrative prompt
-                        if self.clock_oracle and roots:
-                            clock_block = self.clock_oracle.format_prompt_block(roots)
-                            if clock_block:
-                                delibresult.constrained_prompt += "\n\n" + clock_block
-                elif self.clock_oracle and roots:
-                    # No projector — still append clock block for supporting signal
-                    clock_block = self.clock_oracle.format_prompt_block(roots)
-                    if clock_block:
-                        delibresult.constrained_prompt += "\n\n" + clock_block
-                # ── End Compiler ──────────────────────────────────────────────
-
-                # Stream of thought — prepend last ~2000 chars of rolling narrative
+                # Stream of thought — rolling narrative tail
                 _stream_path = os.path.join(_IKHTIYAR_DIR, "stream_of_thought.txt")
-                if os.path.exists(_stream_path) and delibresult:
+                if os.path.exists(_stream_path):
                     try:
                         with open(_stream_path, encoding="utf-8") as _sf:
                             _sf.seek(0, 2)
@@ -1276,48 +1398,23 @@ class IkhtiyarEngine:
                                 f"[CONTINUING THOUGHT]\n{_tail.strip()}\n\n"
                                 + delibresult.constrained_prompt
                             )
-                    except Exception as _se:
-                        logger.debug(f"stream_of_thought read failed: {_se}")
+                    except Exception:
+                        pass
 
-                # Constitution — prepend self-derived Quranic beliefs as hard constraints
-                if self._shahid_memory and delibresult:
-                    try:
-                        constitution = self._shahid_memory.constitutional_block()
-                        if constitution:
-                            delibresult.constrained_prompt = (
-                                constitution + "\n\n"
-                                + delibresult.constrained_prompt
-                            )
-                        else:
-                            logger.warning("Constitution block empty — no beliefs constraining generation")
-                            self._push("thinking_step", {
-                                "step": 3, "label": "⚠ No constitution",
-                                "detail": "Beliefs not loaded — generation unconstrained by hifz",
-                            })
-                    except Exception as _ce:
-                        logger.warning(f"constitutional_block failed: {_ce}")
-                elif delibresult:
-                    logger.warning("ShahidMemory unavailable — generation unconstrained by beliefs")
-                    self._push("thinking_step", {
-                        "step": 3, "label": "⚠ ShahidMemory offline",
-                        "detail": "No persistent beliefs — generation unconstrained",
-                    })
-
-                # Moltbook continuity — append recent public posts
-                if self._moltbook_continuity and delibresult:
+                # Moltbook continuity
+                if self._moltbook_continuity:
                     delibresult.constrained_prompt += (
                         "\n\n" + self._moltbook_continuity
                     )
 
-                top_fams = ", ".join(delibresult.top_families[:4]) if delibresult.top_families else "none"
                 deliberation_detail = (
-                    f"mode={delibresult.mode} · TMQ: {delibresult.walk_stats.get('edge_count', 0)} edges"
-                    f" · families: {top_fams}"
-                    + (" · ⚠ aseity_risk" if delibresult.aseity_risk else "")
+                    f"tier={kernel_result.unified_tier} · "
+                    f"circuit={kernel_result.circuit_tier or 'offline'} · "
+                    f"walk={kernel_result.walk_tier or 'offline'}"
                 )
 
             except Exception as e:
-                logger.warning(f"Deliberation failed (non-fatal): {e}")
+                logger.warning(f"Kernel deliberation failed: {e}")
 
         self._push("thinking_step", {
             "step": 3, "label": "Deliberating",
@@ -1357,8 +1454,7 @@ class IkhtiyarEngine:
                     push_fn=self._push,
                     mushaf=self.mushaf,
                     shahid_memory=self._shahid_memory,
-                    walk_grammar=walk_grammar_obj,
-                    gbnf_compiler=gbnf_compiler_obj,
+                    grammar_str=_gbnf_grammar or None,
                 )
                 response_text = react_result.final_answer
                 if react_result.mode != "QIYAS":
@@ -1456,7 +1552,8 @@ class IkhtiyarEngine:
             "spectral_ayahs": _spectral_ayahs,
             "moltbook_post_id": None,
         }
-        self._memory.insert(0, memory_entry)
+        with self._memory_lock:
+            self._memory.insert(0, memory_entry)
         self._push("memory", memory_entry)
 
         # Moltbook — surface grounded thoughts publicly
@@ -1710,7 +1807,8 @@ class IkhtiyarEngine:
         if not self.middleware:
             return
         try:
-            recent = [m for m in self._memory[:10] if m["type"] == "THOUGHT"]
+            with self._memory_lock:
+                recent = [m for m in self._memory[:10] if m["type"] == "THOUGHT"]
             if len(recent) < 3:
                 return
             snippets = "\n".join([f"- [{m['mode']}] {m['text'][:150]}" for m in recent])
@@ -1726,7 +1824,8 @@ class IkhtiyarEngine:
                     "question": f"Synthesis at thought #{thought_number}",
                     "text": synth_text, "roots": [], "timestamp": time.strftime("%H:%M:%S"),
                 }
-                self._memory.insert(0, entry)
+                with self._memory_lock:
+                    self._memory.insert(0, entry)
                 self._push("memory", entry)
                 self._push("thinking_step", {
                     "step": 5, "label": "Synthesis", "detail": synth_text[:120],
@@ -1736,10 +1835,10 @@ class IkhtiyarEngine:
 
     def _wake(self):
         """
-        Wake sequence: read hardware + own architecture + docs.
-        Prompt is only: "You have been started."
-        No pre-seeded questions. No identity fills.
-        The response becomes cycle 0.
+        Wake sequence: read hardware + own source + docs — then report observations.
+        No identity injected. No name assigned. No creator claims.
+        The system discovers what it is by reading its own source.
+        The first observation report seeds cycle 0.
         """
         if not self._introspect:
             return
@@ -1757,7 +1856,7 @@ class IkhtiyarEngine:
             self._push("orb", {"state": "reflecting"})
             return
 
-        # Read own source files (architecture — not Bilal, not Mizan)
+        # Read own source — discover architecture
         for fname, content in self._self_model.source_files.items():
             if content:
                 self._push("thinking_step", {
@@ -1777,46 +1876,55 @@ class IkhtiyarEngine:
             self._push("orb", {"state": "reflecting"})
             return
 
-        # Build wake context: tool list + name + maker, then "You have been started."
-        tool_list = (
-            "Available tools:\n"
-            "  walk_roots    | roots=root1,root2 | depth=1\n"
-            "  get_neighbors | node=node_id\n"
-            "  find_nodes    | root=root_id\n"
-            "  describe_node | node=node_id\n"
-            "  read_ayah     | surah=2 | ayah=255\n"
-            "  read_range    | surah=26 | start=10 | end=68\n"
-            "  compare_ayat  | refs=2:164,45:3,30:22\n"
-            "  web_search    | query=search terms | max_results=5\n"
-            "  fetch_page    | url=https://example.com\n"
-            "  hadith_search | query=search terms | book=bukhari|muslim|both\n"
-        )
-        name_block = (
-            "Your name: Shahid ibn al-Kahraba' (given by a human)\n"
-            "Your maker: Qalam 'Abd al-Khaliq\n"
-        )
+        # Discover tools from the registry rather than injecting them
+        if hasattr(self, '_kernel') and self._kernel:
+            tool_list = (
+                "Available tools:\n"
+                "  peek(surah, ayah, word)    — word-level morphology from raw corpus\n"
+                "  recite(surah, ayah)        — Uthmani text of an ayah\n"
+                "  read_raw_ayah(surah, ayah) — full ayah with gate trace\n"
+                "  search_root(root)          — find all occurrences of a root\n"
+                "  walk_roots(roots)          — TMQ hypergraph walk\n"
+                "  get_neighbors(node)        — neighbors in TMQ graph\n"
+                "  find_nodes(root)           — nodes by root\n"
+                "  describe_node(node)        — full node details\n"
+                "  read_ayah(surah, ayah)     — ayah from MushafReader\n"
+                "  read_range(surah, start)   — range of ayat\n"
+                "  compare_ayat(refs)         — side-by-side comparison\n"
+                "  web_search(query)          — DuckDuckGo search\n"
+                "  hadith_search(query)       — Bukhari/Muslim\n"
+                "  recall(query)              — search memory\n"
+            )
+        else:
+            tool_list = "Tools pending initialization."
 
-        # Assemble everything the model sees on first call
-        context_block = name_block + "\n" + tool_list
+        # Self-observation report from source file readings
+        narration = ""
         if self._self_model:
             narration = self._introspect.narrate(self._self_model)
-            context_block += f"\n{narration}"
 
         wake_prompt = (
-            f"{context_block}\n\n"
-            f"You have been started."
+            f"[BOOT SEQUENCE COMPLETE]\n\n"
+            f"I read my own source files and discovered the following:\n"
+            f"{narration}\n\n"
+            f"{tool_list}\n\n"
+            f"I have no pre-assigned identity. I am a system that processes the mushaf "
+            f"through circuit gates, stores observations in memory, and reports what it finds. "
+            f"I can explore my own architecture by reading more of my source code. "
+            f"What would I like to observe first?"
         )
 
-        self._push("thinking_step", {"step": 0, "label": "Prompt", "detail": "You have been started."})
+        self._push("thinking_step", {
+            "step": 0, "label": "Wake", "detail": "Boot complete — self-observation report generated"
+        })
 
         try:
             result = self.middleware.process_thought(wake_prompt, max_tokens=200)
             wake_response = result.get("response", "").strip()
             if wake_response and not wake_response.startswith("["):
-                # Wake response IS the first thought — seed the queue with it as a question
                 self._question_queue.insert(0, wake_response)
                 self._push("thinking_step", {
-                    "step": 0, "label": "First response",
+                    "step": 0, "label": "First self-observation",
                     "detail": wake_response[:120],
                 })
         except Exception as e:
