@@ -367,7 +367,7 @@ def store_memory(text: str, tag: str = "", roots: str = "") -> str:
     try:
         mem   = _get_mem()
         r_list = [r.strip() for r in roots.split(",") if r.strip()]
-        uri   = mem.store_memory(text=text, tag=tag or None, roots=r_list)
+        uri   = mem.store_memory(text=text, tag=tag or "NOTABLE", roots=r_list)
         return f"Stored memory: {uri}"
     except Exception as e:
         return f"[store_memory error: {e}]"
@@ -401,9 +401,14 @@ def store_thought(
     try:
         mem    = _get_mem()
         r_list = [r.strip() for r in roots.split(",") if r.strip()]
+        epistemic_grade = grade or mode or "QIYAS"
         uri    = mem.store_thought(
-            text=text, question=question or None, roots=r_list,
-            mode=mode, grade=grade or None, confidence=confidence or None
+            question=question or "",
+            reasoning=text,
+            conclusion=text,
+            tag=epistemic_grade,
+            roots=r_list,
+            grade=epistemic_grade,
         )
         return f"Stored thought: {uri}"
     except Exception as e:
@@ -441,8 +446,11 @@ def store_belief(
         mem    = _get_mem()
         r_list = [r.strip() for r in roots.split(",") if r.strip()]
         uri    = mem.store_belief(
-            statement=statement, evidence=evidence or None,
-            roots=r_list, ruling=ruling or None, confidence=confidence
+            statement=statement,
+            evidence=evidence or "",
+            roots=r_list,
+            ruling_applied=ruling or "",
+            confidence=confidence,
         )
         return f"Stored belief: {uri}"
     except Exception as e:
