@@ -1,7 +1,7 @@
 import logging
 from qusai_core.ontology.engine import OntologyEngine
 from qusai_core.alignment.mizan import MizanValidator
-from qusai_core.llm.loader import OllamaModel
+from qusai_core.llm.ollama_loader import OllamaModel
 
 logger = logging.getLogger(__name__)
 
@@ -12,20 +12,21 @@ class QusaiMiddleware:
     """
 
     def __init__(self,
-                 repo_id: str = "Qwen/Qwen2.5-7B-Instruct",
+                 repo_id: str = "qwen3:14b",
                  api_token: str = None,
                  lazy_load: bool = False):
 
         self.ontology = OntologyEngine()
         self.validator = MizanValidator()
 
-        # Choose model type based on whether API token is provided
+        # b51d550 switched this package to local Ollama inference.  Keep the
+        # historical api_token argument for callers, but do not route to the
+        # removed Transformers/HF loader.
         if api_token:
-            logger.info("Using HuggingFace Inference API mode")
-            self.model = OllamaModel(repo_id)
+            logger.info("api_token provided but ignored; using local Ollama mode")
         else:
-            logger.info("Using local Transformers GPU mode")
-            self.model = TransformersModel(repo_id)
+            logger.info("Using local Ollama mode")
+        self.model = OllamaModel(repo_id, api_token=api_token)
 
         if not lazy_load:
             self.initialize()

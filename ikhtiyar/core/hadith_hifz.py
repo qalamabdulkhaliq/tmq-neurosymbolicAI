@@ -39,6 +39,10 @@ _TAG_PREFIXES = ("NATURE:", "OBLIGATION:", "PROHIBITION:", "ABSTENTION:", "RIGHT
 _BATCH_SIZE = 8
 
 
+def _default_progress() -> dict:
+    return {"last_completed_batch": 0, "total_tags": 0, "tags_by_type": {}}
+
+
 def _load_corpus() -> list[dict]:
     """
     Load Bukhari + Muslim, return flat list of:
@@ -159,10 +163,18 @@ def _load_progress() -> dict:
     if os.path.exists(_PROGRESS_FILE):
         try:
             with open(_PROGRESS_FILE, encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {"last_completed_batch": 0, "total_tags": 0, "tags_by_type": {}}
+                progress = json.load(f)
+            if (
+                isinstance(progress, dict)
+                and isinstance(progress.get("last_completed_batch"), int)
+                and isinstance(progress.get("total_tags"), int)
+                and isinstance(progress.get("tags_by_type"), dict)
+            ):
+                return progress
+            logger.warning("Hadith hifz: ignoring incompatible progress schema in %s", _PROGRESS_FILE)
+        except Exception as e:
+            logger.warning("Hadith hifz: failed to load progress: %s", e)
+    return _default_progress()
 
 
 def _save_progress(progress: dict):
@@ -191,7 +203,7 @@ def run_hadith_hifz(engine: "IkhtiyarEngine", restart: bool = False) -> None:
 
     progress = _load_progress()
     if restart:
-        progress = {"last_completed_batch": 0, "total_tags": 0, "tags_by_type": {}}
+        progress = _default_progress()
         _save_progress(progress)
 
     start_batch = progress["last_completed_batch"]
