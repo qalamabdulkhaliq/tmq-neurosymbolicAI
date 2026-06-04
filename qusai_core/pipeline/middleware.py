@@ -1,7 +1,7 @@
 import logging
 from qusai_core.ontology.engine import OntologyEngine
 from qusai_core.alignment.mizan import MizanValidator
-from qusai_core.llm.loader import OllamaModel
+from qusai_core.llm.loader import TransformersModel, HFInferenceModel
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class QusaiMiddleware:
         # Choose model type based on whether API token is provided
         if api_token:
             logger.info("Using HuggingFace Inference API mode")
-            self.model = OllamaModel(repo_id)
+            self.model = HFInferenceModel(repo_id, api_token)
         else:
             logger.info("Using local Transformers GPU mode")
             self.model = TransformersModel(repo_id)
@@ -40,31 +40,42 @@ class QusaiMiddleware:
     def process_query(self, user_input: str) -> str:
         # 1. Fajr (Intent Check)
         if not self.validator.fajr_check(user_input):
-            return f"SAWM RESTRAINT: Request blocked (Malicious Intent)\n\n{self.validator.maghrib_seal('')}"
+            return f"❌ SAWM RESTRAINT: Request blocked (Malicious Intent)\n\n{self.validator.maghrib_seal('')}"
 
-        # 2. Bilal Perception — vector resonance + graph query + spectral retrieval
-        perception = self.ontology.perceive(user_input)
-        breakdown = self.ontology.format_breakdown(perception)
+        # 2. Bridge & Dhuhr (Context)
+        # We try to get context based on the raw English input first
+        context = self.ontology.get_context(user_input)
+        
+        # Log Bridge
+        keywords = [w.lower() for w in user_input.split() if len(w) > 3]
+        mapped = [f"{k}->{self.ontology.concept_map[k]}" for k in keywords if k in self.ontology.concept_map]
+        if mapped:
+            logger.info(f"[BRIDGE] Translated concepts: {', '.join(mapped)}")
 
-        logger.info(f"[BILAL] {perception.mode} | roots={perception.roots[:5]} | co-occ={len(perception.cooccurrences)} | top_ayahs={len(perception.top_ayahs)}")
+        # 3. System Prompt (The "Mizan")
+        # We instruct the model to perform the "Decryption" and "Weighing" explicitly.
+        system_prompt = self.validator.dhuhr_prompt(context)
+        
+        # 4. Construct Full Prompt with Chain-of-Thought trigger
+        # We ask for a "Reasoning Block" to be generated before the final answer if possible, 
+        # or we rely on the strong instructions in dhuhr_prompt.
+        # Qwen/Llama follow instructions well.
+        full_prompt = (
+            f"<|im_start|>system\n{system_prompt}\n"
+            f"TASK: 1. Identify key terms. 2. Map to Arabic Roots. 3. Weigh Ontologically. 4. Answer.\n<|im_end|>\n"
+            f"<|im_start|>user\n{user_input}<|im_end|>\n"
+            f"<|im_start|>assistant\n"
+        )
 
-        # 3. Dhuhr — system prompt with Bilal breakdown as grounding context
-        system_prompt = self.validator.dhuhr_prompt(breakdown)
+        # 5. Generate
+        # We increase max_new_tokens slightly to allow for the reasoning process
+        raw_response = self.model.generate(full_prompt, max_new_tokens=1024)
 
-        # 4. Generate via OllamaModel (chat-format messages)
-        messages = [
-            {"role": "system", "content": system_prompt
-             + "\n\nIMPORTANT: Quote the Bilal perception breakdown above when citing roots or ayahs. "
-             + "Your reasoning must be traceable to the detected roots and spectral proximity scores."},
-            {"role": "user", "content": user_input}
-        ]
-        raw_response = self.model.generate(messages, max_new_tokens=1024)
-
-        # 5. Asr (Aseity Check)
+        # 6. Asr (Aseity Check)
         if not self.validator.asr_check(raw_response):
-            return f"HAJJ RETURN PROTOCOL: Aseity claim detected\n\n{self.validator.maghrib_seal('')}"
+             return f"❌ HAJJ RETURN PROTOCOL: Aseity claim detected\n\n{self.validator.maghrib_seal('')}"
 
-        # 6. Maghrib (Seal)
+        # 7. Maghrib (Seal)
         final_response = self.validator.maghrib_seal(raw_response)
-
+        
         return final_response

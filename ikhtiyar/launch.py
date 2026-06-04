@@ -40,12 +40,12 @@ logger = logging.getLogger("launch")
 
 _DIR     = os.path.dirname(os.path.abspath(__file__))
 _PROJECT = os.path.dirname(_DIR)
-_BISMILLAH = os.path.join(_PROJECT, "bismillah")
-_QUSAI_HF  = os.path.join(_BISMILLAH, "QUS-AI HF")
 
-TMQ_PATH = os.environ.get("TMQ_PATH", os.path.join(_BISMILLAH, "TMQ_v12.json"))
-TTL_PATH = os.environ.get("TTL_PATH", os.path.join(_QUSAI_HF,  "quran_root_ontology_v3.ttl"))
+TMQ_PATH = os.environ.get("TMQ_PATH", os.path.join(_DIR, "TMQ_v12.json"))
+TTL_PATH = os.environ.get("TTL_PATH", os.path.join(_PROJECT, "quran_root_ontology_v3.ttl"))
 HVT_PATH = os.environ.get("HVT_PATH", os.path.join(_DIR, "TMQ_hvt.json"))
+HOST = os.environ.get("IKHTIYAR_HOST", "127.0.0.1")
+PORT = int(os.environ.get("IKHTIYAR_PORT", "5000"))
 
 
 def _check_socket(host: str, port: int, timeout: float = 2.0) -> bool:
@@ -74,7 +74,7 @@ def preflight():
         logger.info(f"✓ TMQ_v12.json found ({size_mb:.0f} MB)")
     else:
         logger.error(f"✗ TMQ_v12.json not found at {TMQ_PATH}")
-        logger.error("  Move TMQ_v12.json from bismillah/ to ikhtiyar/ or set TMQ_PATH env var")
+        logger.error("  Move TMQ_v12.json into ikhtiyar/ or set TMQ_PATH env var")
         ok = False
 
     # TTL
@@ -109,7 +109,7 @@ def main():
     print("  بسم الله الرحمن الرحيم")
     print("  ikhtiyar — deliberate before you speak")
     print()
-    print("  http://localhost:5000       — UI")
+    print(f"  http://{HOST}:{PORT}       — UI")
     print("  http://localhost:5820/sparql — SPARQL endpoint")
     print()
 
@@ -121,7 +121,7 @@ def main():
     engine.start()
 
     app = create_app(engine)
-    uvicorn.run(app, host="0.0.0.0", port=5000, log_level="info")
+    uvicorn.run(app, host=HOST, port=PORT, log_level="info")
 
 
 if __name__ == "__main__":
