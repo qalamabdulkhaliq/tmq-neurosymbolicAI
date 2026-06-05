@@ -265,6 +265,34 @@ class ShahidMiddleware:
 
         return {"response": raw, "mode": mode}
 
+    def process_thought_stream(
+        self,
+        prompt: str,
+        grammar: Optional[str] = None,
+        token_callback=None,
+        beliefs: Optional[list] = None,
+        max_tokens: int = 1024,
+        **_: dict,
+    ) -> dict:
+        """
+        Compatibility path for engine fallbacks that expect streaming.
+        The current Ollama loader is non-streaming, so emit the completed
+        response once instead of crashing autonomous degraded startup.
+        """
+        result = self.process_thought(
+            prompt,
+            grammar=grammar,
+            max_tokens=max_tokens,
+            beliefs=beliefs,
+        )
+        response = result.get("response", "")
+        if token_callback and response:
+            try:
+                token_callback(response)
+            except Exception as e:
+                logger.debug(f"process_thought_stream callback failed: {e}")
+        return result
+
     def process_query(self, msg: str) -> str:
         """
         Full Mizan pipeline for direct chat queries (fallback path).

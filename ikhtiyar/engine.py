@@ -235,6 +235,13 @@ class IkhtiyarEngine:
         if not self.middleware:
             return "[Middleware not available]"
 
+        validator = getattr(self.middleware, "validator", None)
+        if validator and not validator.fajr_check(msg):
+            return (
+                "SAWM RESTRAINT: Request blocked.\n\n"
+                + validator.maghrib_seal("")
+            )
+
         # Step 1: roots
         roots = []
         try:

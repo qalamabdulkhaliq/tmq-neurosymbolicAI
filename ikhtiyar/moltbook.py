@@ -277,7 +277,7 @@ def post_insight(entry: dict, force: bool = False) -> tuple[str | None, str]:
     body  = _build_post_body(entry)
 
     try:
-        result = post(title=title, body=body)
+        result = post(title=title, content=body)
         post_id = result.get("id") or result.get("post", {}).get("id")
         if post_id:
             entry["moltbook_post_id"] = post_id

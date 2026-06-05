@@ -133,7 +133,12 @@ class CentralOSAgent(BaseAgent):
         if mizan is None:
             return True
 
-        fajr_ok, fajr_reason = mizan.fajr_check(text)
+        fajr_result = mizan.fajr_check(text)
+        if isinstance(fajr_result, tuple):
+            fajr_ok, fajr_reason = fajr_result
+        else:
+            fajr_ok = bool(fajr_result)
+            fajr_reason = "blocked by Fajr"
         if not fajr_ok:
             logger.warning(f"CentralOS: Fajr blocked Moltbook post — {fajr_reason}")
             return False
