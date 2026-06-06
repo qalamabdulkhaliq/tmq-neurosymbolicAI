@@ -13,6 +13,17 @@ const state = {
   currentCycleStep: 0,
 };
 
+function adminHeaders(extra = {}) {
+  let token = sessionStorage.getItem('ikhtiyarAdminToken') || '';
+  if (!token) {
+    token = prompt('Admin token required') || '';
+    if (token) sessionStorage.setItem('ikhtiyarAdminToken', token);
+  }
+  return token
+    ? { ...extra, 'X-Ikhtiyar-Admin-Token': token }
+    : extra;
+}
+
 // ── Elements ───────────────────────────────────────────────────────────────
 const orb          = document.getElementById('orb');
 const modeBadge    = document.getElementById('mode-badge');
@@ -435,7 +446,7 @@ function handleConstitutionProposal(data) {
 async function approveProposal(id) {
   const res = await fetch('/constitution/approve', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
+    headers: adminHeaders({'Content-Type': 'application/json'}),
     body: JSON.stringify({id}),
   });
   if (res.ok) {
@@ -451,7 +462,7 @@ async function approveProposal(id) {
 async function rejectProposal(id) {
   const res = await fetch('/constitution/reject', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
+    headers: adminHeaders({'Content-Type': 'application/json'}),
     body: JSON.stringify({id, reason: 'Rejected by Qalam'}),
   });
   if (res.ok) {
@@ -480,7 +491,7 @@ async function hifzStart() {
   try {
     const d = await fetch('/hifz/start', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: adminHeaders({'Content-Type': 'application/json'}),
       body: JSON.stringify({ restart: true }),
     }).then(r => r.json());
     _hifzSet(d.message || (d.ok ? 'started' : 'failed'));
@@ -494,7 +505,7 @@ async function hifzResume() {
   try {
     const d = await fetch('/hifz/start', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: adminHeaders({'Content-Type': 'application/json'}),
       body: JSON.stringify({ restart: false }),
     }).then(r => r.json());
     _hifzSet(d.message || (d.ok ? 'resumed' : 'failed'));
@@ -505,7 +516,7 @@ async function hifzResume() {
 async function hifzWipe() {
   if (!confirm('Wipe episodic memory? Beliefs survive.')) return;
   try {
-    const d = await fetch('/hifz/wipe', { method: 'POST' }).then(r => r.json());
+    const d = await fetch('/hifz/wipe', { method: 'POST', headers: adminHeaders() }).then(r => r.json());
     _hifzSet(d.message || 'wiped');
   } catch(e) { _hifzSet(`error: ${e.message}`); }
 }
@@ -537,7 +548,7 @@ async function hadithHifzStart() {
   try {
     const d = await fetch('/hadith_hifz/start', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: adminHeaders({'Content-Type': 'application/json'}),
       body: JSON.stringify({ restart: true })
     }).then(r => r.json());
     _hadithHifzSet(d.message || (d.ok ? 'started' : 'failed'));
@@ -551,7 +562,7 @@ async function hadithHifzResume() {
   try {
     const d = await fetch('/hadith_hifz/start', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: adminHeaders({'Content-Type': 'application/json'}),
       body: JSON.stringify({ restart: false })
     }).then(r => r.json());
     _hadithHifzSet(d.message || (d.ok ? 'resumed' : 'failed'));
@@ -631,7 +642,7 @@ async function mbPost() {
   _mbSet('requesting post…');
   document.getElementById('mb-post-btn').disabled = true;
   try {
-    const d = await fetch('/moltbook/post', { method: 'POST' }).then(r => r.json());
+    const d = await fetch('/moltbook/post', { method: 'POST', headers: adminHeaders() }).then(r => r.json());
     if (d.ok) {
       _mbSet(`posted → ${d.post_id} · thought #${d.thought}`);
     } else {

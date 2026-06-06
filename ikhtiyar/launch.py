@@ -43,8 +43,8 @@ _PROJECT = os.path.dirname(_DIR)
 _BISMILLAH = os.path.join(_PROJECT, "bismillah")
 _QUSAI_HF  = os.path.join(_BISMILLAH, "QUS-AI HF")
 
-TMQ_PATH = os.environ.get("TMQ_PATH", os.path.join(_BISMILLAH, "TMQ_v12.json"))
-TTL_PATH = os.environ.get("TTL_PATH", os.path.join(_QUSAI_HF,  "quran_root_ontology_v3.ttl"))
+TMQ_PATH = os.environ.get("TMQ_PATH", os.path.join(_DIR, "TMQ_v12.json"))
+TTL_PATH = os.environ.get("TTL_PATH", os.path.join(_PROJECT, "quran_root_ontology_v3.ttl"))
 HVT_PATH = os.environ.get("HVT_PATH", os.path.join(_DIR, "TMQ_hvt.json"))
 
 
@@ -74,7 +74,7 @@ def preflight():
         logger.info(f"✓ TMQ_v12.json found ({size_mb:.0f} MB)")
     else:
         logger.error(f"✗ TMQ_v12.json not found at {TMQ_PATH}")
-        logger.error("  Move TMQ_v12.json from bismillah/ to ikhtiyar/ or set TMQ_PATH env var")
+        logger.error("  Set TMQ_PATH to the TMQ_v12.json location")
         ok = False
 
     # TTL
@@ -83,6 +83,7 @@ def preflight():
         logger.info(f"✓ quran_root_ontology_v3.ttl found ({size_mb:.0f} MB)")
     else:
         logger.error(f"✗ quran_root_ontology_v3.ttl not found at {TTL_PATH}")
+        logger.error("  Set TTL_PATH to the quran_root_ontology_v3.ttl location")
         ok = False
 
     # Neo4j (warn only)
