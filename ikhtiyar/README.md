@@ -78,6 +78,9 @@ ollama serve
 # Start Neo4j (separate terminal or service)
 # neo4j start
 
+# Required for browser/admin endpoints that mutate state:
+export IKHTIYAR_ADMIN_TOKEN='choose-a-long-random-token'
+
 # Launch ikhtiyar
 python launch.py
 ```
