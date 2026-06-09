@@ -778,13 +778,16 @@ class IkhtiyarEngine:
 
     def start_hifz(self, restart: bool = True) -> bool:
         """
-        Wipe episodic memory and begin sequential Mushaf reading (tadabbur protocol).
+        Begin sequential Mushaf reading (tadabbur protocol).
+        Explicit restarts wipe episodic memory; resumes preserve it and continue
+        from hifz_progress.json.
         Pauses the normal reasoning loop while hifz is running.
         Returns False if hifz is already active.
         """
         if self._hifz_active:
             return False
-        self.wipe_memory()
+        if restart:
+            self.wipe_memory()
         self._hifz_active = True
 
         def _run():

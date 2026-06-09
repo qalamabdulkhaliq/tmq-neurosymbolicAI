@@ -132,7 +132,12 @@ def create_app(engine) -> FastAPI:
     def hifz_start(req: HifzStartRequest):
         ok = engine.start_hifz(restart=req.restart)
         if ok:
-            return {"ok": True, "message": "Hifz started — episodic memory wiped"}
+            message = (
+                "Hifz restarted — episodic memory wiped"
+                if req.restart else
+                "Hifz resumed — episodic memory preserved"
+            )
+            return {"ok": True, "message": message}
         raise HTTPException(status_code=409, detail="Hifz already active")
 
     @app.get("/hifz/status")
