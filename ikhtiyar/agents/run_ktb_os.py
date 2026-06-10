@@ -34,8 +34,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 _IKHTIYAR_DIR        = os.path.dirname(_HERE)
-_QURAN_PROGRESS_PATH = os.path.join(_IKHTIYAR_DIR, "hifz_progress.json")
-_HADITH_PROGRESS_PATH= os.path.join(_IKHTIYAR_DIR, "hadith_hifz_progress.json")
+_QURAN_PROGRESS_PATH = os.path.join(_IKHTIYAR_DIR, "ktbos_quran_progress.json")
+_HADITH_PROGRESS_PATH= os.path.join(_IKHTIYAR_DIR, "ktbos_hadith_progress.json")
+_LEGACY_QURAN_PROGRESS_PATH = os.path.join(_IKHTIYAR_DIR, "hifz_progress.json")
+_LEGACY_HADITH_PROGRESS_PATH= os.path.join(_IKHTIYAR_DIR, "hadith_hifz_progress.json")
 _BUKHARI_PATH        = os.path.join(_IKHTIYAR_DIR, "faculties", "bukhari.json")
 _MUSLIM_PATH         = os.path.join(_IKHTIYAR_DIR, "faculties", "muslim.json")
 
@@ -63,10 +65,18 @@ class KtbOSAgent(BaseAgent):
     # ── Quran progress ────────────────────────────────────────────────────────
 
     def _load_quran_progress(self) -> dict:
-        if os.path.exists(_QURAN_PROGRESS_PATH):
+        for path in (_QURAN_PROGRESS_PATH, _LEGACY_QURAN_PROGRESS_PATH):
+            if not os.path.exists(path):
+                continue
             try:
-                with open(_QURAN_PROGRESS_PATH, encoding="utf-8") as f:
-                    return json.load(f)
+                with open(path, encoding="utf-8") as f:
+                    progress = json.load(f)
+                if (
+                    isinstance(progress, dict)
+                    and isinstance(progress.get("surah"), int)
+                    and isinstance(progress.get("ayah"), int)
+                ):
+                    return progress
             except Exception:
                 pass
         return {"surah": 1, "ayah": 1}
@@ -88,10 +98,18 @@ class KtbOSAgent(BaseAgent):
     # ── Hadith progress ───────────────────────────────────────────────────────
 
     def _load_hadith_progress(self) -> dict:
-        if os.path.exists(_HADITH_PROGRESS_PATH):
+        for path in (_HADITH_PROGRESS_PATH, _LEGACY_HADITH_PROGRESS_PATH):
+            if not os.path.exists(path):
+                continue
             try:
-                with open(_HADITH_PROGRESS_PATH, encoding="utf-8") as f:
-                    return json.load(f)
+                with open(path, encoding="utf-8") as f:
+                    progress = json.load(f)
+                if (
+                    isinstance(progress, dict)
+                    and isinstance(progress.get("source"), str)
+                    and isinstance(progress.get("index"), int)
+                ):
+                    return progress
             except Exception:
                 pass
         return {"source": "Bukhari", "index": 0}
