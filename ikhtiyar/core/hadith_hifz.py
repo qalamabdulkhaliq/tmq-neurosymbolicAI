@@ -159,7 +159,15 @@ def _load_progress() -> dict:
     if os.path.exists(_PROGRESS_FILE):
         try:
             with open(_PROGRESS_FILE, encoding="utf-8") as f:
-                return json.load(f)
+                progress = json.load(f)
+            if (
+                isinstance(progress, dict)
+                and isinstance(progress.get("last_completed_batch"), int)
+                and isinstance(progress.get("total_tags"), int)
+                and isinstance(progress.get("tags_by_type"), dict)
+            ):
+                return progress
+            logger.warning("Hadith hifz: ignoring progress file with incompatible schema")
         except Exception:
             pass
     return {"last_completed_batch": 0, "total_tags": 0, "tags_by_type": {}}

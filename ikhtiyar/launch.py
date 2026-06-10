@@ -109,7 +109,10 @@ def main():
     print("  بسم الله الرحمن الرحيم")
     print("  ikhtiyar — deliberate before you speak")
     print()
-    print("  http://localhost:5000       — UI")
+    host = os.environ.get("IKHTIYAR_HOST", "127.0.0.1")
+    port = int(os.environ.get("IKHTIYAR_PORT", "5000"))
+
+    print(f"  http://{host}:{port}       — UI")
     print("  http://localhost:5820/sparql — SPARQL endpoint")
     print()
 
@@ -121,7 +124,7 @@ def main():
     engine.start()
 
     app = create_app(engine)
-    uvicorn.run(app, host="0.0.0.0", port=5000, log_level="info")
+    uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":
