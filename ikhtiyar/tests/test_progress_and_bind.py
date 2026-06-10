@@ -1,8 +1,9 @@
 import importlib
-import inspect
 import json
 import os
 import sys
+import ast
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -69,6 +70,15 @@ def test_ktbos_progress_uses_dedicated_files_and_legacy_read_only_fallback(tmp_p
 
 
 def test_server_run_defaults_to_loopback():
-    from server import run
+    server_path = Path(__file__).resolve().parents[1] / "server.py"
+    tree = ast.parse(server_path.read_text(encoding="utf-8"))
+    run_def = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "run"
+    )
+    host_arg_index = [arg.arg for arg in run_def.args.args].index("host")
+    default_offset = len(run_def.args.args) - len(run_def.args.defaults)
+    host_default = run_def.args.defaults[host_arg_index - default_offset]
 
-    assert inspect.signature(run).parameters["host"].default == "127.0.0.1"
+    assert isinstance(host_default, ast.Constant)
+    assert host_default.value == "127.0.0.1"
