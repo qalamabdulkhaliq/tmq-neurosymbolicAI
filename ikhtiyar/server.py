@@ -248,7 +248,7 @@ def create_app(engine) -> FastAPI:
     return app
 
 
-def run(engine, host: str = "0.0.0.0", port: int = 5000):
+def run(engine, host: str = "127.0.0.1", port: int = 5000):
     """Start uvicorn server (blocking)."""
     import uvicorn
     app = create_app(engine)

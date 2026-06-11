@@ -8,7 +8,7 @@ Checks:
   4. Neo4j on :7687 (warn, not fail)
   5. TMQ_hvt.json HVT tape (warn, not fail — degrades to BFS walk)
 
-Then starts IkhtiyarEngine + Flask on :5000
+Then starts IkhtiyarEngine + FastAPI on localhost:5000
 """
 
 import socket
@@ -46,6 +46,21 @@ _QUSAI_HF  = os.path.join(_BISMILLAH, "QUS-AI HF")
 TMQ_PATH = os.environ.get("TMQ_PATH", os.path.join(_BISMILLAH, "TMQ_v12.json"))
 TTL_PATH = os.environ.get("TTL_PATH", os.path.join(_QUSAI_HF,  "quran_root_ontology_v3.ttl"))
 HVT_PATH = os.environ.get("HVT_PATH", os.path.join(_DIR, "TMQ_hvt.json"))
+
+
+def _server_host() -> str:
+    return os.environ.get("IKHTIYAR_HOST", "127.0.0.1").strip() or "127.0.0.1"
+
+
+def _server_port() -> int:
+    raw = os.environ.get("IKHTIYAR_PORT", "5000").strip()
+    try:
+        port = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"IKHTIYAR_PORT must be an integer, got {raw!r}") from exc
+    if not 1 <= port <= 65535:
+        raise ValueError(f"IKHTIYAR_PORT must be between 1 and 65535, got {port}")
+    return port
 
 
 def _check_socket(host: str, port: int, timeout: float = 2.0) -> bool:
@@ -109,7 +124,11 @@ def main():
     print("  بسم الله الرحمن الرحيم")
     print("  ikhtiyar — deliberate before you speak")
     print()
-    print("  http://localhost:5000       — UI")
+    host = _server_host()
+    port = _server_port()
+    display_host = "localhost" if host in {"127.0.0.1", "::1"} else host
+
+    print(f"  http://{display_host}:{port}       — UI")
     print("  http://localhost:5820/sparql — SPARQL endpoint")
     print()
 
@@ -121,7 +140,7 @@ def main():
     engine.start()
 
     app = create_app(engine)
-    uvicorn.run(app, host="0.0.0.0", port=5000, log_level="info")
+    uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":
