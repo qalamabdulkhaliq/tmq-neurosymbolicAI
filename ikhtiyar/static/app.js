@@ -26,6 +26,37 @@ const chatHistory  = document.getElementById('chat-history');
 const chatInput    = document.getElementById('chat-input');
 const sendBtn      = document.getElementById('send-btn');
 
+const ADMIN_TOKEN_KEY = 'ikhtiyarAdminToken';
+
+function getAdminToken() {
+  let token = localStorage.getItem(ADMIN_TOKEN_KEY) || '';
+  if (!token) {
+    token = prompt('Admin token required for this action') || '';
+    token = token.trim();
+    if (token) localStorage.setItem(ADMIN_TOKEN_KEY, token);
+  }
+  return token;
+}
+
+async function adminJson(url, options = {}) {
+  const token = getAdminToken();
+  if (!token) throw new Error('admin token required');
+
+  const headers = {
+    ...(options.headers || {}),
+    Authorization: `Bearer ${token}`,
+  };
+  const res = await fetch(url, {...options, headers});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      localStorage.removeItem(ADMIN_TOKEN_KEY);
+    }
+    throw new Error(data.detail || data.error || `HTTP ${res.status}`);
+  }
+  return data;
+}
+
 // ── SSE connection ─────────────────────────────────────────────────────────
 let stream = null;
 
@@ -433,33 +464,37 @@ function handleConstitutionProposal(data) {
 }
 
 async function approveProposal(id) {
-  const res = await fetch('/constitution/approve', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({id}),
-  });
-  if (res.ok) {
+  try {
+    await adminJson('/constitution/approve', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id}),
+    });
     const card = document.querySelector(`.constitution-card[data-id="${id}"]`);
     if (card) {
       card.classList.add('approved');
       const actions = card.querySelector('.constitution-actions');
       if (actions) actions.remove();
     }
+  } catch (e) {
+    alert(e.message);
   }
 }
 
 async function rejectProposal(id) {
-  const res = await fetch('/constitution/reject', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({id, reason: 'Rejected by Qalam'}),
-  });
-  if (res.ok) {
+  try {
+    await adminJson('/constitution/reject', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id, reason: 'Rejected by Qalam'}),
+    });
     const card = document.querySelector(`.constitution-card[data-id="${id}"]`);
     if (card) card.remove();
     const list = document.getElementById('constitution-list');
     const count = document.getElementById('constitution-count');
     if (list && count) count.textContent = `(${list.children.length})`;
+  } catch (e) {
+    alert(e.message);
   }
 }
 
@@ -478,11 +513,11 @@ async function hifzStart() {
   _hifzSet('wiping memory + starting…');
   document.getElementById('hifz-start-btn').disabled = true;
   try {
-    const d = await fetch('/hifz/start', {
+    const d = await adminJson('/hifz/start', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ restart: true }),
-    }).then(r => r.json());
+    });
     _hifzSet(d.message || (d.ok ? 'started' : 'failed'));
     if (d.ok) _pollHifzProgress();
   } catch(e) { _hifzSet(`error: ${e.message}`); }
@@ -492,11 +527,11 @@ async function hifzStart() {
 async function hifzResume() {
   _hifzSet('resuming from last surah…');
   try {
-    const d = await fetch('/hifz/start', {
+    const d = await adminJson('/hifz/start', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ restart: false }),
-    }).then(r => r.json());
+    });
     _hifzSet(d.message || (d.ok ? 'resumed' : 'failed'));
     if (d.ok) _pollHifzProgress();
   } catch(e) { _hifzSet(`error: ${e.message}`); }
@@ -505,7 +540,7 @@ async function hifzResume() {
 async function hifzWipe() {
   if (!confirm('Wipe episodic memory? Beliefs survive.')) return;
   try {
-    const d = await fetch('/hifz/wipe', { method: 'POST' }).then(r => r.json());
+    const d = await adminJson('/hifz/wipe', { method: 'POST' });
     _hifzSet(d.message || 'wiped');
   } catch(e) { _hifzSet(`error: ${e.message}`); }
 }
@@ -535,11 +570,11 @@ async function hadithHifzStart() {
   _hadithHifzSet('starting sunnah reading…');
   document.getElementById('hadith-hifz-start-btn').disabled = true;
   try {
-    const d = await fetch('/hadith_hifz/start', {
+    const d = await adminJson('/hadith_hifz/start', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ restart: true })
-    }).then(r => r.json());
+    });
     _hadithHifzSet(d.message || (d.ok ? 'started' : 'failed'));
     if (d.ok) _pollHadithHifzProgress();
   } catch(e) { _hadithHifzSet(`error: ${e.message}`); }
@@ -549,11 +584,11 @@ async function hadithHifzStart() {
 async function hadithHifzResume() {
   _hadithHifzSet('resuming sunnah reading…');
   try {
-    const d = await fetch('/hadith_hifz/start', {
+    const d = await adminJson('/hadith_hifz/start', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ restart: false })
-    }).then(r => r.json());
+    });
     _hadithHifzSet(d.message || (d.ok ? 'resumed' : 'failed'));
     if (d.ok) _pollHadithHifzProgress();
   } catch(e) { _hadithHifzSet(`error: ${e.message}`); }
@@ -631,7 +666,7 @@ async function mbPost() {
   _mbSet('requesting post…');
   document.getElementById('mb-post-btn').disabled = true;
   try {
-    const d = await fetch('/moltbook/post', { method: 'POST' }).then(r => r.json());
+    const d = await adminJson('/moltbook/post', { method: 'POST' });
     if (d.ok) {
       _mbSet(`posted → ${d.post_id} · thought #${d.thought}`);
     } else {
