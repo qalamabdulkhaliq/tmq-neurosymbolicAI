@@ -28,6 +28,7 @@ Run via launch.py (not directly).
 import json as _json
 import logging
 import os
+import secrets
 from pathlib import Path
 from typing import Optional
 
@@ -39,6 +40,7 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 _STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+_ADMIN_TOKEN_ENVS = ("IKHTIYAR_ADMIN_TOKEN", "SHAHID_ADMIN_TOKEN")
 
 
 # ── Request models ─────────────────────────────────────────────────────────────
@@ -58,6 +60,33 @@ class HifzStartRequest(BaseModel):
 
 class HadithHifzStartRequest(BaseModel):
     restart: bool = False
+
+
+# ── Admin auth ────────────────────────────────────────────────────────────────
+
+def _admin_token() -> str:
+    for env_name in _ADMIN_TOKEN_ENVS:
+        token = os.environ.get(env_name, "").strip()
+        if token:
+            return token
+    return ""
+
+
+def _presented_admin_token(request: Request) -> str:
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return request.headers.get("x-admin-token", "").strip()
+
+
+def _require_admin(request: Request) -> None:
+    expected = _admin_token()
+    if not expected:
+        raise HTTPException(status_code=503, detail="Admin token not configured")
+
+    presented = _presented_admin_token(request)
+    if not presented or not secrets.compare_digest(presented, expected):
+        raise HTTPException(status_code=401, detail="Admin token required")
 
 
 # ── Factory ────────────────────────────────────────────────────────────────────
@@ -129,7 +158,8 @@ def create_app(engine) -> FastAPI:
     # ── KtbOS / Quran hifz ─────────────────────────────────────────────────────
 
     @app.post("/hifz/start")
-    def hifz_start(req: HifzStartRequest):
+    def hifz_start(req: HifzStartRequest, request: Request):
+        _require_admin(request)
         ok = engine.start_hifz(restart=req.restart)
         if ok:
             return {"ok": True, "message": "Hifz started — episodic memory wiped"}
@@ -140,14 +170,16 @@ def create_app(engine) -> FastAPI:
         return engine.hifz_status()
 
     @app.post("/hifz/wipe")
-    def hifz_wipe():
+    def hifz_wipe(request: Request):
+        _require_admin(request)
         engine.wipe_memory()
         return {"ok": True, "message": "Episodic memory wiped"}
 
     # ── KtbOS / Hadith hifz ────────────────────────────────────────────────────
 
     @app.post("/hadith_hifz/start")
-    def hadith_hifz_start(req: HadithHifzStartRequest):
+    def hadith_hifz_start(req: HadithHifzStartRequest, request: Request):
+        _require_admin(request)
         ok = engine.start_hadith_hifz(restart=req.restart)
         if ok:
             return {"ok": True, "message": "Hadith hifz started — reading Bukhari + Muslim"}
@@ -176,7 +208,8 @@ def create_app(engine) -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.post("/moltbook/post")
-    def moltbook_post():
+    def moltbook_post(request: Request):
+        _require_admin(request)
         try:
             from moltbook_agent import request_post
             return request_post(engine)
@@ -226,7 +259,8 @@ def create_app(engine) -> FastAPI:
         }
 
     @app.post("/constitution/approve")
-    def constitution_approve(req: ApproveRequest):
+    def constitution_approve(req: ApproveRequest, request: Request):
+        _require_admin(request)
         if not engine.constitution:
             raise HTTPException(status_code=503, detail="Constitution not loaded")
         pid = req.id.strip()
@@ -236,7 +270,8 @@ def create_app(engine) -> FastAPI:
         return {"ok": True, "id": pid, "status": "approved"}
 
     @app.post("/constitution/reject")
-    def constitution_reject(req: RejectRequest):
+    def constitution_reject(req: RejectRequest, request: Request):
+        _require_admin(request)
         if not engine.constitution:
             raise HTTPException(status_code=503, detail="Constitution not loaded")
         pid = req.id.strip()

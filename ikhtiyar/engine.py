@@ -219,6 +219,29 @@ class IkhtiyarEngine:
         except Exception as _e:
             logger.warning(f"IkhtiyarEngine: Moltbook unavailable ({_e})")
 
+    def _blocked_chat_response(self) -> str:
+        validator = getattr(self.middleware, "validator", None) if self.middleware else None
+        if validator:
+            return "SAWM RESTRAINT: Request blocked.\n\n" + validator.maghrib_seal("")
+        return "SAWM RESTRAINT: Request blocked."
+
+    def _finalize_chat_response(self, response: str) -> str:
+        validator = getattr(self.middleware, "validator", None) if self.middleware else None
+        if not validator:
+            return response
+
+        isha_passed, isha_details = validator.isha_verify(response, self.middleware)
+        if not isha_passed:
+            logger.warning(f"[ISHA] Chat verification failed: {isha_details}")
+            return (
+                "ISHA VERIFICATION: Response contained unverifiable claims.\n\n"
+                + validator.maghrib_seal("")
+            )
+        if isha_details.get("aseity_warning"):
+            logger.warning(f"[ISHA] Chat structural aseity warning: {isha_details}")
+
+        return validator.maghrib_seal(response)
+
     def _chat_deliberate(self, msg: str) -> str:
         """
         Full deliberative path for chat messages.
@@ -234,6 +257,10 @@ class IkhtiyarEngine:
         """
         if not self.middleware:
             return "[Middleware not available]"
+
+        validator = getattr(self.middleware, "validator", None)
+        if validator and not validator.fajr_check(msg):
+            return self._blocked_chat_response()
 
         # Step 1: roots
         roots = []
@@ -332,9 +359,9 @@ class IkhtiyarEngine:
                 )
                 response = result.get("response", "")
 
-                if hasattr(self.middleware, 'validator'):
-                    response = self.middleware.validator.maghrib_seal(response)
-                return response
+                if result.get("mode") in ("SILENCE", "BLOCKED"):
+                    return response
+                return self._finalize_chat_response(response)
 
             except Exception as e:
                 logger.warning(f"Circuit evaluation failed, falling back to deliberate: {e}")
@@ -388,10 +415,9 @@ class IkhtiyarEngine:
                 result = self.middleware.process_thought(full_prompt, max_tokens=512)
                 response = result.get("response", "")
 
-                # Maghrib seal — not added by process_thought
-                if hasattr(self.middleware, 'validator'):
-                    response = self.middleware.validator.maghrib_seal(response)
-                return response
+                if result.get("mode") in ("SILENCE", "BLOCKED"):
+                    return response
+                return self._finalize_chat_response(response)
 
             except Exception as e:
                 logger.warning(f"Chat deliberation failed, falling back: {e}")
