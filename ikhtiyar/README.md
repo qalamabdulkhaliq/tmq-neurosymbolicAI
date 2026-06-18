@@ -78,6 +78,9 @@ ollama serve
 # Start Neo4j (separate terminal or service)
 # neo4j start
 
+# Required for memory wipes, hifz starts, Moltbook posting, and constitution changes
+export IKHTIYAR_ADMIN_TOKEN="choose-a-long-random-token"
+
 # Launch ikhtiyar
 python launch.py
 ```
