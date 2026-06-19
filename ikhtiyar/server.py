@@ -26,6 +26,7 @@ Run via launch.py (not directly).
 """
 
 import json as _json
+import hmac
 import logging
 import os
 from pathlib import Path
@@ -39,6 +40,46 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 _STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+_ADMIN_TOKEN_ENV = ("IKHTIYAR_ADMIN_TOKEN", "SHAHID_ADMIN_TOKEN")
+
+
+def _configured_admin_token() -> Optional[str]:
+    for name in _ADMIN_TOKEN_ENV:
+        token = os.environ.get(name, "").strip()
+        if token:
+            return token
+    return None
+
+
+def _supplied_admin_token(request: Request) -> str:
+    header_token = request.headers.get("X-Admin-Token", "").strip()
+    if header_token:
+        return header_token
+
+    auth = request.headers.get("Authorization", "").strip()
+    scheme, _, value = auth.partition(" ")
+    if scheme.lower() == "bearer" and value.strip():
+        return value.strip()
+    return ""
+
+
+def _require_admin(request: Request) -> None:
+    expected = _configured_admin_token()
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="Admin token is not configured",
+        )
+
+    supplied = _supplied_admin_token(request)
+    if not supplied:
+        raise HTTPException(
+            status_code=401,
+            detail="Admin token required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not hmac.compare_digest(supplied, expected):
+        raise HTTPException(status_code=403, detail="Invalid admin token")
 
 
 # ── Request models ─────────────────────────────────────────────────────────────
@@ -129,7 +170,8 @@ def create_app(engine) -> FastAPI:
     # ── KtbOS / Quran hifz ─────────────────────────────────────────────────────
 
     @app.post("/hifz/start")
-    def hifz_start(req: HifzStartRequest):
+    def hifz_start(req: HifzStartRequest, request: Request):
+        _require_admin(request)
         ok = engine.start_hifz(restart=req.restart)
         if ok:
             return {"ok": True, "message": "Hifz started — episodic memory wiped"}
@@ -140,14 +182,16 @@ def create_app(engine) -> FastAPI:
         return engine.hifz_status()
 
     @app.post("/hifz/wipe")
-    def hifz_wipe():
+    def hifz_wipe(request: Request):
+        _require_admin(request)
         engine.wipe_memory()
         return {"ok": True, "message": "Episodic memory wiped"}
 
     # ── KtbOS / Hadith hifz ────────────────────────────────────────────────────
 
     @app.post("/hadith_hifz/start")
-    def hadith_hifz_start(req: HadithHifzStartRequest):
+    def hadith_hifz_start(req: HadithHifzStartRequest, request: Request):
+        _require_admin(request)
         ok = engine.start_hadith_hifz(restart=req.restart)
         if ok:
             return {"ok": True, "message": "Hadith hifz started — reading Bukhari + Muslim"}
@@ -176,7 +220,8 @@ def create_app(engine) -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.post("/moltbook/post")
-    def moltbook_post():
+    def moltbook_post(request: Request):
+        _require_admin(request)
         try:
             from moltbook_agent import request_post
             return request_post(engine)
@@ -226,7 +271,8 @@ def create_app(engine) -> FastAPI:
         }
 
     @app.post("/constitution/approve")
-    def constitution_approve(req: ApproveRequest):
+    def constitution_approve(req: ApproveRequest, request: Request):
+        _require_admin(request)
         if not engine.constitution:
             raise HTTPException(status_code=503, detail="Constitution not loaded")
         pid = req.id.strip()
@@ -236,7 +282,8 @@ def create_app(engine) -> FastAPI:
         return {"ok": True, "id": pid, "status": "approved"}
 
     @app.post("/constitution/reject")
-    def constitution_reject(req: RejectRequest):
+    def constitution_reject(req: RejectRequest, request: Request):
+        _require_admin(request)
         if not engine.constitution:
             raise HTTPException(status_code=503, detail="Constitution not loaded")
         pid = req.id.strip()
