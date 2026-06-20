@@ -25,13 +25,14 @@ Endpoints:
 Run via launch.py (not directly).
 """
 
+import hmac
 import json as _json
 import logging
 import os
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -39,6 +40,39 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 _STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+_ADMIN_TOKEN_ENVS = ("IKHTIYAR_ADMIN_TOKEN", "SHAHID_ADMIN_TOKEN")
+
+
+def _admin_token() -> Optional[str]:
+    for name in _ADMIN_TOKEN_ENVS:
+        token = os.environ.get(name, "").strip()
+        if token:
+            return token
+    return None
+
+
+def require_admin_auth(
+    x_admin_token: Optional[str] = Header(default=None),
+    authorization: Optional[str] = Header(default=None),
+) -> None:
+    """
+    Guard destructive/admin routes.
+
+    Fail closed when no admin token is configured; these endpoints mutate memory,
+    constitution state, or public Moltbook output and may be bound on 0.0.0.0.
+    """
+    expected = _admin_token()
+    if not expected:
+        raise HTTPException(status_code=503, detail="admin token not configured")
+
+    supplied = (x_admin_token or "").strip()
+    if not supplied and authorization:
+        scheme, _, value = authorization.partition(" ")
+        if scheme.lower() == "bearer":
+            supplied = value.strip()
+
+    if not supplied or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(status_code=403, detail="invalid admin token")
 
 
 # ── Request models ─────────────────────────────────────────────────────────────
@@ -129,7 +163,7 @@ def create_app(engine) -> FastAPI:
     # ── KtbOS / Quran hifz ─────────────────────────────────────────────────────
 
     @app.post("/hifz/start")
-    def hifz_start(req: HifzStartRequest):
+    def hifz_start(req: HifzStartRequest, _: None = Depends(require_admin_auth)):
         ok = engine.start_hifz(restart=req.restart)
         if ok:
             return {"ok": True, "message": "Hifz started — episodic memory wiped"}
@@ -140,14 +174,14 @@ def create_app(engine) -> FastAPI:
         return engine.hifz_status()
 
     @app.post("/hifz/wipe")
-    def hifz_wipe():
+    def hifz_wipe(_: None = Depends(require_admin_auth)):
         engine.wipe_memory()
         return {"ok": True, "message": "Episodic memory wiped"}
 
     # ── KtbOS / Hadith hifz ────────────────────────────────────────────────────
 
     @app.post("/hadith_hifz/start")
-    def hadith_hifz_start(req: HadithHifzStartRequest):
+    def hadith_hifz_start(req: HadithHifzStartRequest, _: None = Depends(require_admin_auth)):
         ok = engine.start_hadith_hifz(restart=req.restart)
         if ok:
             return {"ok": True, "message": "Hadith hifz started — reading Bukhari + Muslim"}
@@ -176,7 +210,7 @@ def create_app(engine) -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.post("/moltbook/post")
-    def moltbook_post():
+    def moltbook_post(_: None = Depends(require_admin_auth)):
         try:
             from moltbook_agent import request_post
             return request_post(engine)
@@ -226,7 +260,7 @@ def create_app(engine) -> FastAPI:
         }
 
     @app.post("/constitution/approve")
-    def constitution_approve(req: ApproveRequest):
+    def constitution_approve(req: ApproveRequest, _: None = Depends(require_admin_auth)):
         if not engine.constitution:
             raise HTTPException(status_code=503, detail="Constitution not loaded")
         pid = req.id.strip()
@@ -236,7 +270,7 @@ def create_app(engine) -> FastAPI:
         return {"ok": True, "id": pid, "status": "approved"}
 
     @app.post("/constitution/reject")
-    def constitution_reject(req: RejectRequest):
+    def constitution_reject(req: RejectRequest, _: None = Depends(require_admin_auth)):
         if not engine.constitution:
             raise HTTPException(status_code=503, detail="Constitution not loaded")
         pid = req.id.strip()
