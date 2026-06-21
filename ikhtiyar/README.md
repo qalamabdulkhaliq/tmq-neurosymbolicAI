@@ -79,10 +79,15 @@ ollama serve
 # neo4j start
 
 # Launch ikhtiyar
+export IKHTIYAR_ADMIN_TOKEN="$(openssl rand -hex 32)"
 python launch.py
 ```
 
 Server runs on `http://localhost:5000` by default.
+Administrative actions that mutate persistent state (hifz start/wipe, hadith hifz,
+Moltbook posting, and constitution approval/rejection) require
+`IKHTIYAR_ADMIN_TOKEN`. The UI prompts for this token the first time one of those
+actions is used in a browser tab.
 
 ---
 

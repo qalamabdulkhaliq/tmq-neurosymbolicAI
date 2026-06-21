@@ -34,9 +34,9 @@ for _p in [_IKHTIYAR_DIR, _QUSAI_HF_DIR]:
         sys.path.insert(0, _p)
 
 # ── Defaults ───────────────────────────────────────────────────────────────────
-DEFAULT_TMQ_PATH     = os.path.join(_BISMILLAH_DIR, "TMQ_v12.json")
+DEFAULT_TMQ_PATH     = os.path.join(_IKHTIYAR_DIR,  "TMQ_v12.json")
 DEFAULT_HVT_PATH     = os.path.join(_IKHTIYAR_DIR,  "TMQ_hvt.json")
-DEFAULT_TTL_PATH     = os.path.join(_QUSAI_HF_DIR,  "quran_root_ontology_v3.ttl")
+DEFAULT_TTL_PATH     = os.path.join(_PROJECT_DIR,   "quran_root_ontology_v3.ttl")
 DEFAULT_OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:14b")
 
 NEO4J_URI  = os.environ.get("NEO4J_URI",  "neo4j://127.0.0.1:7687")
