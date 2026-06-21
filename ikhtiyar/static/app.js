@@ -25,6 +25,29 @@ const statMemories = document.getElementById('stat-memories');
 const chatHistory  = document.getElementById('chat-history');
 const chatInput    = document.getElementById('chat-input');
 const sendBtn      = document.getElementById('send-btn');
+const ADMIN_TOKEN_SESSION_KEY = 'ikhtiyar_admin_token';
+
+function getAdminToken() {
+  let token = sessionStorage.getItem(ADMIN_TOKEN_SESSION_KEY) || '';
+  if (!token) {
+    token = (window.prompt('Admin token required (IKHTIYAR_ADMIN_TOKEN):') || '').trim();
+    if (token) sessionStorage.setItem(ADMIN_TOKEN_SESSION_KEY, token);
+  }
+  return token;
+}
+
+function adminHeaders(headers = {}) {
+  const token = getAdminToken();
+  return token ? { ...headers, 'X-Ikhtiyar-Admin-Token': token } : headers;
+}
+
+async function parseJsonResponse(res) {
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.detail || data.error || res.statusText || `HTTP ${res.status}`);
+  }
+  return data;
+}
 
 // ── SSE connection ─────────────────────────────────────────────────────────
 let stream = null;
@@ -435,7 +458,7 @@ function handleConstitutionProposal(data) {
 async function approveProposal(id) {
   const res = await fetch('/constitution/approve', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
+    headers: adminHeaders({'Content-Type': 'application/json'}),
     body: JSON.stringify({id}),
   });
   if (res.ok) {
@@ -451,7 +474,7 @@ async function approveProposal(id) {
 async function rejectProposal(id) {
   const res = await fetch('/constitution/reject', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
+    headers: adminHeaders({'Content-Type': 'application/json'}),
     body: JSON.stringify({id, reason: 'Rejected by Qalam'}),
   });
   if (res.ok) {
@@ -480,9 +503,9 @@ async function hifzStart() {
   try {
     const d = await fetch('/hifz/start', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: adminHeaders({'Content-Type': 'application/json'}),
       body: JSON.stringify({ restart: true }),
-    }).then(r => r.json());
+    }).then(parseJsonResponse);
     _hifzSet(d.message || (d.ok ? 'started' : 'failed'));
     if (d.ok) _pollHifzProgress();
   } catch(e) { _hifzSet(`error: ${e.message}`); }
@@ -494,9 +517,9 @@ async function hifzResume() {
   try {
     const d = await fetch('/hifz/start', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: adminHeaders({'Content-Type': 'application/json'}),
       body: JSON.stringify({ restart: false }),
-    }).then(r => r.json());
+    }).then(parseJsonResponse);
     _hifzSet(d.message || (d.ok ? 'resumed' : 'failed'));
     if (d.ok) _pollHifzProgress();
   } catch(e) { _hifzSet(`error: ${e.message}`); }
@@ -505,7 +528,10 @@ async function hifzResume() {
 async function hifzWipe() {
   if (!confirm('Wipe episodic memory? Beliefs survive.')) return;
   try {
-    const d = await fetch('/hifz/wipe', { method: 'POST' }).then(r => r.json());
+    const d = await fetch('/hifz/wipe', {
+      method: 'POST',
+      headers: adminHeaders(),
+    }).then(parseJsonResponse);
     _hifzSet(d.message || 'wiped');
   } catch(e) { _hifzSet(`error: ${e.message}`); }
 }
@@ -537,9 +563,9 @@ async function hadithHifzStart() {
   try {
     const d = await fetch('/hadith_hifz/start', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: adminHeaders({'Content-Type': 'application/json'}),
       body: JSON.stringify({ restart: true })
-    }).then(r => r.json());
+    }).then(parseJsonResponse);
     _hadithHifzSet(d.message || (d.ok ? 'started' : 'failed'));
     if (d.ok) _pollHadithHifzProgress();
   } catch(e) { _hadithHifzSet(`error: ${e.message}`); }
@@ -551,9 +577,9 @@ async function hadithHifzResume() {
   try {
     const d = await fetch('/hadith_hifz/start', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: adminHeaders({'Content-Type': 'application/json'}),
       body: JSON.stringify({ restart: false })
-    }).then(r => r.json());
+    }).then(parseJsonResponse);
     _hadithHifzSet(d.message || (d.ok ? 'resumed' : 'failed'));
     if (d.ok) _pollHadithHifzProgress();
   } catch(e) { _hadithHifzSet(`error: ${e.message}`); }
@@ -631,7 +657,10 @@ async function mbPost() {
   _mbSet('requesting post…');
   document.getElementById('mb-post-btn').disabled = true;
   try {
-    const d = await fetch('/moltbook/post', { method: 'POST' }).then(r => r.json());
+    const d = await fetch('/moltbook/post', {
+      method: 'POST',
+      headers: adminHeaders(),
+    }).then(parseJsonResponse);
     if (d.ok) {
       _mbSet(`posted → ${d.post_id} · thought #${d.thought}`);
     } else {
