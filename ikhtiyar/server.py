@@ -39,6 +39,34 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 _STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+_ADMIN_TOKEN_ENV_VARS = ("IKHTIYAR_ADMIN_TOKEN", "SHAHID_ADMIN_TOKEN")
+
+
+def _configured_admin_token() -> Optional[str]:
+    for name in _ADMIN_TOKEN_ENV_VARS:
+        token = os.environ.get(name, "").strip()
+        if token:
+            return token
+    return None
+
+
+def _request_admin_token(request: Request) -> str:
+    auth_header = request.headers.get("authorization", "").strip()
+    if auth_header.lower().startswith("bearer "):
+        return auth_header[7:].strip()
+    return (
+        request.headers.get("x-ikhtiyar-admin-token", "").strip()
+        or request.headers.get("x-admin-token", "").strip()
+    )
+
+
+def _require_admin(request: Request) -> None:
+    expected = _configured_admin_token()
+    if not expected:
+        logger.warning("Admin mutation rejected because no admin token is configured")
+        raise HTTPException(status_code=403, detail="admin token not configured")
+    if _request_admin_token(request) != expected:
+        raise HTTPException(status_code=401, detail="admin token required")
 
 
 # ── Request models ─────────────────────────────────────────────────────────────
@@ -129,10 +157,16 @@ def create_app(engine) -> FastAPI:
     # ── KtbOS / Quran hifz ─────────────────────────────────────────────────────
 
     @app.post("/hifz/start")
-    def hifz_start(req: HifzStartRequest):
+    def hifz_start(req: HifzStartRequest, request: Request):
+        _require_admin(request)
         ok = engine.start_hifz(restart=req.restart)
         if ok:
-            return {"ok": True, "message": "Hifz started — episodic memory wiped"}
+            message = (
+                "Hifz restarted — episodic memory wiped"
+                if req.restart else
+                "Hifz resumed — episodic memory preserved"
+            )
+            return {"ok": True, "message": message}
         raise HTTPException(status_code=409, detail="Hifz already active")
 
     @app.get("/hifz/status")
@@ -140,14 +174,18 @@ def create_app(engine) -> FastAPI:
         return engine.hifz_status()
 
     @app.post("/hifz/wipe")
-    def hifz_wipe():
+    def hifz_wipe(request: Request):
+        _require_admin(request)
+        if engine.hifz_status().get("active"):
+            raise HTTPException(status_code=409, detail="Hifz already active")
         engine.wipe_memory()
         return {"ok": True, "message": "Episodic memory wiped"}
 
     # ── KtbOS / Hadith hifz ────────────────────────────────────────────────────
 
     @app.post("/hadith_hifz/start")
-    def hadith_hifz_start(req: HadithHifzStartRequest):
+    def hadith_hifz_start(req: HadithHifzStartRequest, request: Request):
+        _require_admin(request)
         ok = engine.start_hadith_hifz(restart=req.restart)
         if ok:
             return {"ok": True, "message": "Hadith hifz started — reading Bukhari + Muslim"}
@@ -176,7 +214,8 @@ def create_app(engine) -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.post("/moltbook/post")
-    def moltbook_post():
+    def moltbook_post(request: Request):
+        _require_admin(request)
         try:
             from moltbook_agent import request_post
             return request_post(engine)
@@ -226,7 +265,8 @@ def create_app(engine) -> FastAPI:
         }
 
     @app.post("/constitution/approve")
-    def constitution_approve(req: ApproveRequest):
+    def constitution_approve(req: ApproveRequest, request: Request):
+        _require_admin(request)
         if not engine.constitution:
             raise HTTPException(status_code=503, detail="Constitution not loaded")
         pid = req.id.strip()
@@ -236,7 +276,8 @@ def create_app(engine) -> FastAPI:
         return {"ok": True, "id": pid, "status": "approved"}
 
     @app.post("/constitution/reject")
-    def constitution_reject(req: RejectRequest):
+    def constitution_reject(req: RejectRequest, request: Request):
+        _require_admin(request)
         if not engine.constitution:
             raise HTTPException(status_code=503, detail="Constitution not loaded")
         pid = req.id.strip()

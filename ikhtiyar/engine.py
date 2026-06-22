@@ -219,6 +219,35 @@ class IkhtiyarEngine:
         except Exception as _e:
             logger.warning(f"IkhtiyarEngine: Moltbook unavailable ({_e})")
 
+    def _mizan_blocked_response(self) -> str:
+        validator = getattr(getattr(self, "middleware", None), "validator", None)
+        if validator:
+            return (
+                "SAWM RESTRAINT: Request blocked.\n\n"
+                + validator.maghrib_seal("")
+            )
+        return "SAWM RESTRAINT: Request blocked."
+
+    def _finalize_chat_response(self, response: str) -> str:
+        validator = getattr(getattr(self, "middleware", None), "validator", None)
+        if not validator:
+            return response
+
+        if response.startswith("[ASEITY VIOLATION BLOCKED]"):
+            return validator.maghrib_seal(response)
+
+        isha_passed, isha_details = validator.isha_verify(response, self)
+        if not isha_passed:
+            logger.warning(f"[ISHA] Verification failed: {isha_details}")
+            return (
+                "ISHA VERIFICATION: Response contained unverifiable claims.\n\n"
+                + validator.maghrib_seal("")
+            )
+        if isha_details.get("aseity_warning"):
+            logger.warning(f"[ISHA] Structural aseity warning: {isha_details}")
+
+        return validator.maghrib_seal(response)
+
     def _chat_deliberate(self, msg: str) -> str:
         """
         Full deliberative path for chat messages.
@@ -234,6 +263,10 @@ class IkhtiyarEngine:
         """
         if not self.middleware:
             return "[Middleware not available]"
+
+        validator = getattr(self.middleware, "validator", None)
+        if validator and not validator.fajr_check(msg):
+            return self._mizan_blocked_response()
 
         # Step 1: roots
         roots = []
@@ -332,9 +365,7 @@ class IkhtiyarEngine:
                 )
                 response = result.get("response", "")
 
-                if hasattr(self.middleware, 'validator'):
-                    response = self.middleware.validator.maghrib_seal(response)
-                return response
+                return self._finalize_chat_response(response)
 
             except Exception as e:
                 logger.warning(f"Circuit evaluation failed, falling back to deliberate: {e}")
@@ -388,10 +419,7 @@ class IkhtiyarEngine:
                 result = self.middleware.process_thought(full_prompt, max_tokens=512)
                 response = result.get("response", "")
 
-                # Maghrib seal — not added by process_thought
-                if hasattr(self.middleware, 'validator'):
-                    response = self.middleware.validator.maghrib_seal(response)
-                return response
+                return self._finalize_chat_response(response)
 
             except Exception as e:
                 logger.warning(f"Chat deliberation failed, falling back: {e}")
@@ -778,13 +806,15 @@ class IkhtiyarEngine:
 
     def start_hifz(self, restart: bool = True) -> bool:
         """
-        Wipe episodic memory and begin sequential Mushaf reading (tadabbur protocol).
+        Begin sequential Mushaf reading (tadabbur protocol).
+        Restarting wipes episodic memory; resuming preserves it.
         Pauses the normal reasoning loop while hifz is running.
         Returns False if hifz is already active.
         """
         if self._hifz_active:
             return False
-        self.wipe_memory()
+        if restart:
+            self.wipe_memory()
         self._hifz_active = True
 
         def _run():
