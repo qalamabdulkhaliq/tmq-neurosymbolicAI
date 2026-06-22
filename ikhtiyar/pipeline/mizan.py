@@ -104,11 +104,14 @@ Format:
 
         Returns: (passed: bool, details: dict)
         """
-        if not hasattr(ontology_engine, 'bilal') or ontology_engine.bilal is None:
+        bilal = getattr(ontology_engine, "bilal", None)
+        if bilal is None:
+            middleware = getattr(ontology_engine, "middleware", None)
+            bilal = getattr(middleware, "bilal", None)
+
+        if bilal is None:
             # Bilal not loaded — degrade gracefully
             return True, {"status": "bilal_unavailable", "verified": False}
-
-        bilal = ontology_engine.bilal
 
         if not bilal.is_ready():
             return True, {"status": "bilal_not_ready", "verified": False}
@@ -129,7 +132,8 @@ Format:
 
             # ── Tier 1: Root existence ──────────────────────────────
             # Check that detected roots actually exist in the ontology graph
-            if ontology_engine.graph is not None:
+            graph = getattr(ontology_engine, "graph", None)
+            if graph is not None:
                 phantom_roots = []
                 for root in perception.roots:
                     verse_set = bilal._get_verse_set(root)
