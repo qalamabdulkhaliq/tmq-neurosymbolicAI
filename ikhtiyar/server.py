@@ -28,6 +28,7 @@ Run via launch.py (not directly).
 import json as _json
 import logging
 import os
+import secrets
 from pathlib import Path
 from typing import Optional
 
@@ -58,6 +59,32 @@ class HifzStartRequest(BaseModel):
 
 class HadithHifzStartRequest(BaseModel):
     restart: bool = False
+
+
+def _configured_admin_token() -> Optional[str]:
+    return os.environ.get("IKHTIYAR_ADMIN_TOKEN") or os.environ.get("SHAHID_ADMIN_TOKEN")
+
+
+def _require_admin(request: Request) -> None:
+    """
+    Protect destructive or externally side-effecting routes.
+
+    The launch path binds to 0.0.0.0, so these endpoints must fail closed unless
+    an operator has configured an admin token and supplied it with the request.
+    """
+    expected = _configured_admin_token()
+    if not expected:
+        raise HTTPException(status_code=503, detail="admin token not configured")
+
+    supplied = request.headers.get("x-admin-token", "")
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        supplied = auth.split(" ", 1)[1].strip()
+
+    if not supplied:
+        raise HTTPException(status_code=401, detail="admin token required")
+    if not secrets.compare_digest(supplied, expected):
+        raise HTTPException(status_code=403, detail="invalid admin token")
 
 
 # ── Factory ────────────────────────────────────────────────────────────────────
@@ -129,10 +156,12 @@ def create_app(engine) -> FastAPI:
     # ── KtbOS / Quran hifz ─────────────────────────────────────────────────────
 
     @app.post("/hifz/start")
-    def hifz_start(req: HifzStartRequest):
+    def hifz_start(req: HifzStartRequest, request: Request):
+        _require_admin(request)
         ok = engine.start_hifz(restart=req.restart)
         if ok:
-            return {"ok": True, "message": "Hifz started — episodic memory wiped"}
+            action = "started — episodic memory wiped" if req.restart else "resumed"
+            return {"ok": True, "message": f"Hifz {action}"}
         raise HTTPException(status_code=409, detail="Hifz already active")
 
     @app.get("/hifz/status")
@@ -140,14 +169,16 @@ def create_app(engine) -> FastAPI:
         return engine.hifz_status()
 
     @app.post("/hifz/wipe")
-    def hifz_wipe():
+    def hifz_wipe(request: Request):
+        _require_admin(request)
         engine.wipe_memory()
         return {"ok": True, "message": "Episodic memory wiped"}
 
     # ── KtbOS / Hadith hifz ────────────────────────────────────────────────────
 
     @app.post("/hadith_hifz/start")
-    def hadith_hifz_start(req: HadithHifzStartRequest):
+    def hadith_hifz_start(req: HadithHifzStartRequest, request: Request):
+        _require_admin(request)
         ok = engine.start_hadith_hifz(restart=req.restart)
         if ok:
             return {"ok": True, "message": "Hadith hifz started — reading Bukhari + Muslim"}
@@ -176,7 +207,8 @@ def create_app(engine) -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.post("/moltbook/post")
-    def moltbook_post():
+    def moltbook_post(request: Request):
+        _require_admin(request)
         try:
             from moltbook_agent import request_post
             return request_post(engine)
@@ -226,7 +258,8 @@ def create_app(engine) -> FastAPI:
         }
 
     @app.post("/constitution/approve")
-    def constitution_approve(req: ApproveRequest):
+    def constitution_approve(req: ApproveRequest, request: Request):
+        _require_admin(request)
         if not engine.constitution:
             raise HTTPException(status_code=503, detail="Constitution not loaded")
         pid = req.id.strip()
@@ -236,7 +269,8 @@ def create_app(engine) -> FastAPI:
         return {"ok": True, "id": pid, "status": "approved"}
 
     @app.post("/constitution/reject")
-    def constitution_reject(req: RejectRequest):
+    def constitution_reject(req: RejectRequest, request: Request):
+        _require_admin(request)
         if not engine.constitution:
             raise HTTPException(status_code=503, detail="Constitution not loaded")
         pid = req.id.strip()

@@ -332,7 +332,9 @@ class IkhtiyarEngine:
                 )
                 response = result.get("response", "")
 
-                if hasattr(self.middleware, 'validator'):
+                if hasattr(self.middleware, "validate_chat_response"):
+                    response = self.middleware.validate_chat_response(response)
+                elif hasattr(self.middleware, 'validator'):
                     response = self.middleware.validator.maghrib_seal(response)
                 return response
 
@@ -388,8 +390,9 @@ class IkhtiyarEngine:
                 result = self.middleware.process_thought(full_prompt, max_tokens=512)
                 response = result.get("response", "")
 
-                # Maghrib seal — not added by process_thought
-                if hasattr(self.middleware, 'validator'):
+                if hasattr(self.middleware, "validate_chat_response"):
+                    response = self.middleware.validate_chat_response(response)
+                elif hasattr(self.middleware, 'validator'):
                     response = self.middleware.validator.maghrib_seal(response)
                 return response
 
@@ -403,7 +406,15 @@ class IkhtiyarEngine:
         self._inject_state_perception()
         self._push("orb", {"state": "chat"})
         try:
-            response = self._chat_deliberate(msg)
+            response = None
+            if self.middleware and hasattr(self.middleware, "validator"):
+                if not self.middleware.validator.fajr_check(msg):
+                    response = (
+                        "SAWM RESTRAINT: Request blocked.\n\n"
+                        + self.middleware.validator.maghrib_seal("")
+                    )
+            if response is None:
+                response = self._chat_deliberate(msg)
         except Exception as e:
             logger.warning(f"chat() error: {e}")
             response = f"[Pipeline error: {e}]"
@@ -778,13 +789,15 @@ class IkhtiyarEngine:
 
     def start_hifz(self, restart: bool = True) -> bool:
         """
-        Wipe episodic memory and begin sequential Mushaf reading (tadabbur protocol).
+        Begin sequential Mushaf reading (tadabbur protocol).
         Pauses the normal reasoning loop while hifz is running.
+        Wipes episodic memory only for an explicit restart.
         Returns False if hifz is already active.
         """
         if self._hifz_active:
             return False
-        self.wipe_memory()
+        if restart:
+            self.wipe_memory()
         self._hifz_active = True
 
         def _run():

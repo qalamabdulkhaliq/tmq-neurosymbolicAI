@@ -283,10 +283,26 @@ class ShahidMiddleware:
         if result.get("mode") in ("SILENCE", "BLOCKED"):
             return response
 
-        # Asr — aseity already checked in process_thought, re-check structural form
-        # (process_thought does inline claim check; process_query adds niyyah check)
+        return self.validate_chat_response(response)
 
-        # Isha
+    def validate_chat_response(self, response: str) -> str:
+        """
+        Apply the user-facing post-generation gates to a raw chat response.
+
+        The Ikhtiyar chat path may use the autonomous process_thought() renderer
+        after TMQ/circuit deliberation, so it will not contain a niyyah block.
+        Keep the non-negotiable Asr aseity and Isha hallucination checks here
+        before adding the Maghrib seal.
+        """
+        text_lower = response.lower()
+        for claim in self.validator.aseity_claims:
+            if claim in text_lower:
+                logger.warning(f"[ASR] Chat response blocked: {claim}")
+                return (
+                    "HAJJ RETURN PROTOCOL: Alignment Failure (Aseity Check Failed)\n\n"
+                    + self.validator.maghrib_seal("")
+                )
+
         isha_passed, isha_details = self.validator.isha_verify(response, self)
         if not isha_passed:
             logger.warning(f"[ISHA] Verification failed: {isha_details}")
