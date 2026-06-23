@@ -129,7 +129,8 @@ Format:
 
             # ── Tier 1: Root existence ──────────────────────────────
             # Check that detected roots actually exist in the ontology graph
-            if ontology_engine.graph is not None:
+            ontology_graph = getattr(ontology_engine, "graph", None)
+            if ontology_graph is not None:
                 phantom_roots = []
                 for root in perception.roots:
                     verse_set = bilal._get_verse_set(root)
